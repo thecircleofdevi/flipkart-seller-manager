@@ -59,6 +59,22 @@ type ShipmentFilterResponse = {
   nextPageUrl?: string;
 };
 
+async function flipkartRequestWithRetry<T>(path: string, init: RequestInit, attempts = 3) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await flipkartRequest<T>(path, init);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable = message.includes("Flipkart API 500") || message.includes("Flipkart API 503");
+      if (!retryable || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
 const states = {
   preDispatch: ["APPROVED", "PACKING_IN_PROGRESS", "PACKED", "FORM_FAILED", "READY_TO_DISPATCH"],
   postDispatch: ["SHIPPED", "DELIVERED", "PICKUP_COMPLETE"],
@@ -279,7 +295,7 @@ export async function POST() {
         };
 
         const requestStarted = Date.now();
-        const result = await flipkartRequest<ShipmentFilterResponse>(nextPath, {
+        const result = await flipkartRequestWithRetry<ShipmentFilterResponse>(nextPath, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -332,6 +348,17 @@ export async function POST() {
     return NextResponse.json({ ok: true, recordsSeen: totalSeen, recordsWritten: totalWritten });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    try {
+      await supabaseAdmin
+        .from("sync_runs")
+        .update({
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          error_message: message,
+        })
+        .eq("user_id", process.env.FLIPKART_OWNER_USER_ID ?? "")
+        .eq("status", "running");
+    } catch {}
     return NextResponse.json(
       { ok: false, error: message },
       { status: 500 },
