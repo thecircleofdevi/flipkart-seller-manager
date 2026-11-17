@@ -242,8 +242,9 @@ async function upsertShipmentGraph(
 
     if (itemError) throw itemError;
 
-    if (!shipment.shipmentId) continue;
+  }
 
+  if (shipment.shipmentId && firstItem) {
     const { data: shipmentRow, error: shipmentError } = await supabaseAdmin
       .from("shipments")
       .upsert(
@@ -252,9 +253,9 @@ async function upsertShipmentGraph(
           flipkart_shipment_id: shipment.shipmentId,
           order_id: orderDbId,
           location_id: locationDbId,
-          state: item.status ?? null,
+          state: firstItem.status ?? null,
           shipment_type: shipment.shipmentType ?? null,
-          service_profile: item.serviceProfile ?? null,
+          service_profile: firstItem.serviceProfile ?? null,
           hold: shipment.hold ?? false,
           mps: shipment.mps ?? false,
           dispatch_after: shipment.dispatchAfterDate ?? null,
@@ -270,20 +271,31 @@ async function upsertShipmentGraph(
 
     if (shipmentError) throw shipmentError;
 
-    const { error: shipmentItemError } = await supabaseAdmin
-      .from("shipment_items")
-      .upsert(
-        {
-          user_id: userId,
-          shipment_id: shipmentRow.id,
-          order_item_id: orderItem.id,
-          quantity: item.quantity ?? 1,
-          raw: item,
-        },
-        { onConflict: "shipment_id,order_item_id" },
-      );
+    for (const item of items) {
+      const { data: orderItem } = await supabaseAdmin
+        .from("order_items")
+        .select("id,quantity,raw")
+        .eq("user_id", userId)
+        .eq("flipkart_order_item_id", item.orderItemId)
+        .single();
 
-    if (shipmentItemError) throw shipmentItemError;
+      if (!orderItem) continue;
+
+      const { error: shipmentItemError } = await supabaseAdmin
+        .from("shipment_items")
+        .upsert(
+          {
+            user_id: userId,
+            shipment_id: shipmentRow.id,
+            order_item_id: orderItem.id,
+            quantity: item.quantity ?? 1,
+            raw: item,
+          },
+          { onConflict: "shipment_id,order_item_id" },
+        );
+
+      if (shipmentItemError) throw shipmentItemError;
+    }
   }
 
   if (!firstItem && shipment.shipmentId) {
