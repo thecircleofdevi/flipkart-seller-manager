@@ -96,7 +96,7 @@ function assertAuthorized(request: Request) {
 async function flipkartRequestWithRetry<T>(
   path: string,
   init: RequestInit,
-  attempts = 4,
+  attempts = 6,
 ) {
   let lastError: unknown;
 
@@ -339,6 +339,9 @@ export async function POST(request: Request) {
   const startedAt = new Date().toISOString();
   let runId: string | null = null;
 
+  let totalSeen = 0;
+  let totalWritten = 0;
+
   try {
     assertAuthorized(request);
 
@@ -357,9 +360,6 @@ export async function POST(request: Request) {
 
     if (runError) throw runError;
     runId = run.id;
-
-    let totalSeen = 0;
-    let totalWritten = 0;
 
     for (const [type, typeStates] of Object.entries(states) as [
       FilterType,
@@ -481,6 +481,8 @@ export async function POST(request: Request) {
         .update({
           status: "failed",
           finished_at: new Date().toISOString(),
+          records_seen: totalSeen,
+          records_written: totalWritten,
           error_message: message,
         })
         .eq("id", runId);
