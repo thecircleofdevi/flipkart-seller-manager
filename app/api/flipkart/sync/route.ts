@@ -389,7 +389,7 @@ export async function POST(request: Request) {
                   body: JSON.stringify(body),
                 }
               : {
-                  method: "POST",
+                  method: "GET",
                   headers: { "Content-Type": "application/json" },
                 },
           );
