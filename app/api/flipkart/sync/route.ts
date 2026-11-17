@@ -75,7 +75,14 @@ const states: Record<FilterType, readonly string[]> = {
     "FORM_FAILED",
     "READY_TO_DISPATCH",
   ],
-  postDispatch: ["SHIPPED", "DELIVERED", "PICKUP_COMPLETE"],
+  postDispatch: [
+    "SHIPPED",
+    "DELIVERED",
+    "PICKUP_COMPLETE",
+    "RETURN_REQUESTED",
+    "RETURNED",
+    "COMPLETED",
+  ],
   cancelled: ["CANCELLED"],
 };
 
@@ -364,97 +371,174 @@ export async function POST(request: Request) {
     if (runError) throw runError;
     runId = run.id;
 
+    // Flipkart's filter API is paginated and the platform can return a 500 on a
+    // large result window. Use modifiedDate windows so one bad page does not
+    // prevent the rest of the order history from syncing.
+    const now = new Date();
+    const syncStart = new Date("2020-01-01T00:00:00.000Z");
+    const windowMs = 90 * 24 * 60 * 60 * 1000;
+
     for (const [type, typeStates] of Object.entries(states) as [
       FilterType,
       readonly string[],
     ][]) {
-      let nextPath = "/sellers/v3/shipments/filter";
-      let page = 0;
+      let windowFrom = syncStart;
 
-      while (nextPath) {
-        const isFirstPage = page === 0;
-        const body = {
-          filter: { type, states: typeStates },
-          pagination: { pageSize: 20 },
-          sort: { field: "orderDate", order: "desc" },
-        };
+      while (windowFrom < now) {
+        const windowTo = new Date(
+          Math.min(windowFrom.getTime() + windowMs, now.getTime()),
+        );
 
-        const requestStarted = Date.now();
-        let result;
+        const pendingWindows: Array<{
+          from: Date;
+          to: Date;
+          depth: number;
+        }> = [{ from: windowFrom, to: windowTo, depth: 0 }];
 
-        try {
-          result = await flipkartRequestWithRetry<ShipmentFilterResponse>(
-            nextPath,
-            isFirstPage
-              ? {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(body),
-                }
-              : {
-                  method: "GET",
-                  headers: { "Content-Type": "application/json" },
+        while (pendingWindows.length) {
+          const current = pendingWindows.pop()!;
+          let page = 0;
+          let nextPath = "/sellers/v3/shipments/filter";
+          let shouldSplit = false;
+
+          try {
+            while (nextPath) {
+              const isFirstPage = page === 0;
+              const body = {
+                filter: {
+                  type,
+                  states: typeStates,
+                  modifiedDate: {
+                    from: current.from.toISOString(),
+                    to: current.to.toISOString(),
+                  },
                 },
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+                pagination: { pageSize: 20 },
+                sort: { field: "modifiedDate", order: "desc" },
+              };
 
-          await supabaseAdmin.from("api_requests").insert({
-            user_id: userId,
-            integration_id: null,
-            method: isFirstPage ? "POST" : "GET",
-            endpoint: nextPath,
-            status_code: null,
-            started_at: new Date(requestStarted).toISOString(),
-            finished_at: new Date().toISOString(),
-            duration_ms: Date.now() - requestStarted,
-            request_meta: { filterType: type, page },
-            response_meta: {},
-            error_message: message,
-          });
+              const requestStarted = Date.now();
+              let result;
 
-          throw error;
+              try {
+                result = await flipkartRequestWithRetry<ShipmentFilterResponse>(
+                  nextPath,
+                  isFirstPage
+                    ? {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(body),
+                      }
+                    : {
+                        method: "GET",
+                        headers: { "Content-Type": "application/json" },
+                      },
+                );
+              } catch (error) {
+                const message =
+                  error instanceof Error ? error.message : String(error);
+
+                await supabaseAdmin.from("api_requests").insert({
+                  user_id: userId,
+                  integration_id: null,
+                  method: isFirstPage ? "POST" : "GET",
+                  endpoint: nextPath,
+                  status_code: null,
+                  started_at: new Date(requestStarted).toISOString(),
+                  finished_at: new Date().toISOString(),
+                  duration_ms: Date.now() - requestStarted,
+                  request_meta: {
+                    filterType: type,
+                    page,
+                    modifiedFrom: current.from.toISOString(),
+                    modifiedTo: current.to.toISOString(),
+                  },
+                  response_meta: {},
+                  error_message: message,
+                });
+
+                throw error;
+              }
+
+              const shipments = result.data.shipments ?? [];
+              totalSeen += shipments.length;
+
+              const { error: apiLogError } = await supabaseAdmin
+                .from("api_requests")
+                .insert({
+                  user_id: userId,
+                  integration_id: null,
+                  method: isFirstPage ? "POST" : "GET",
+                  endpoint: nextPath,
+                  status_code: result.status,
+                  started_at: new Date(requestStarted).toISOString(),
+                  finished_at: new Date().toISOString(),
+                  duration_ms: Date.now() - requestStarted,
+                  request_meta: {
+                    filterType: type,
+                    page,
+                    modifiedFrom: current.from.toISOString(),
+                    modifiedTo: current.to.toISOString(),
+                  },
+                  response_meta: {
+                    shipmentCount: shipments.length,
+                    hasMore: result.data.hasMore ?? false,
+                    hasNextPageUrl: Boolean(result.data.nextPageUrl),
+                  },
+                });
+
+              if (apiLogError) throw apiLogError;
+
+              for (const shipment of shipments) {
+                await upsertShipmentGraph(userId, run.id, shipment);
+                totalWritten++;
+              }
+
+              if (!result.data.hasMore) {
+                nextPath = "";
+                break;
+              }
+
+              if (!result.data.nextPageUrl) {
+                throw new Error(
+                  "Flipkart returned hasMore=true without nextPageUrl.",
+                );
+              }
+
+              nextPath = normalizeFlipkartPath(result.data.nextPageUrl);
+              page++;
+
+              if (page > 250) {
+                throw new Error("Shipment pagination safety limit reached.");
+              }
+            }
+          } catch (error) {
+            const spanMs = current.to.getTime() - current.from.getTime();
+            const minWindowMs = 60 * 60 * 1000;
+
+            if (spanMs > minWindowMs && current.depth < 12) {
+              shouldSplit = true;
+
+              const midpoint = new Date(
+                current.from.getTime() + Math.floor(spanMs / 2),
+              );
+
+              // Re-run the whole window after a pagination failure. Upserts make
+              // already-written rows safe to replay, while the smaller windows
+              // avoid repeatedly hitting the same failing large result set.
+              pendingWindows.push(
+                { from: midpoint, to: current.to, depth: current.depth + 1 },
+                { from: current.from, to: midpoint, depth: current.depth + 1 },
+              );
+            } else {
+              throw error;
+            }
+          }
+
+          if (!shouldSplit) continue;
         }
 
-        const shipments = result.data.shipments ?? [];
-        totalSeen += shipments.length;
-
-        const { error: apiLogError } = await supabaseAdmin
-          .from("api_requests")
-          .insert({
-            user_id: userId,
-            integration_id: null,
-            method: isFirstPage ? "POST" : "GET",
-            endpoint: nextPath,
-            status_code: result.status,
-            started_at: new Date(requestStarted).toISOString(),
-            finished_at: new Date().toISOString(),
-            duration_ms: Date.now() - requestStarted,
-            request_meta: { filterType: type, page },
-            response_meta: {
-              shipmentCount: shipments.length,
-              hasMore: result.data.hasMore ?? false,
-              hasNextPageUrl: Boolean(result.data.nextPageUrl),
-            },
-          });
-
-        if (apiLogError) throw apiLogError;
-
-        for (const shipment of shipments) {
-          await upsertShipmentGraph(userId, run.id, shipment);
-          totalWritten++;
-        }
-
-        nextPath =
-          result.data.hasMore && result.data.nextPageUrl
-            ? normalizeFlipkartPath(result.data.nextPageUrl)
-            : "";
-
-        page++;
-
-        if (page > 250) {
-          throw new Error("Shipment pagination safety limit reached.");
-        }
+        windowFrom = windowTo;
       }
     }
 
