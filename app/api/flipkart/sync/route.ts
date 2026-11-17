@@ -306,7 +306,10 @@ export async function POST() {
         }
 
         nextPath = result.data.hasMore && result.data.nextPageUrl
-          ? new URL(result.data.nextPageUrl).pathname + new URL(result.data.nextPageUrl).search
+          ? (() => {
+              const url = new URL(result.data.nextPageUrl, "https://api.flipkart.net");
+              return url.pathname + url.search;
+            })()
           : "";
         page++;
         if (page > 250) throw new Error("Shipment pagination safety limit reached.");
