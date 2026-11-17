@@ -114,6 +114,9 @@ async function flipkartRequestWithRetry<T>(
 
       if (!retryable || attempt === attempts - 1) throw error;
 
+      const { invalidateFlipkartAccessToken } = await import("@/lib/flipkart/auth");
+      invalidateFlipkartAccessToken();
+
       await new Promise((resolve) =>
         setTimeout(resolve, 1000 * 2 ** attempt),
       );
@@ -365,7 +368,7 @@ export async function POST(request: Request) {
       FilterType,
       readonly string[],
     ][]) {
-      let nextPath = "/sellers/v3/shipments/filter/";
+      let nextPath = "/sellers/v3/shipments/filter";
       let page = 0;
 
       while (nextPath) {
@@ -399,7 +402,7 @@ export async function POST(request: Request) {
           await supabaseAdmin.from("api_requests").insert({
             user_id: userId,
             integration_id: null,
-            method: "POST",
+            method: isFirstPage ? "POST" : "GET",
             endpoint: nextPath,
             status_code: null,
             started_at: new Date(requestStarted).toISOString(),
@@ -421,7 +424,7 @@ export async function POST(request: Request) {
           .insert({
             user_id: userId,
             integration_id: null,
-            method: "POST",
+            method: isFirstPage ? "POST" : "GET",
             endpoint: nextPath,
             status_code: result.status,
             started_at: new Date(requestStarted).toISOString(),
