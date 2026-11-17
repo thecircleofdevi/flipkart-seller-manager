@@ -157,14 +157,14 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
 
     const { error: inventoryError } = await supabaseAdmin
       .from("listing_inventory")
-      .insert({
+      .upsert({
         user_id: userId,
         listing_id: listingDbId,
         location_id: locationRow.id,
         quantity: location.inventory ?? 0,
         effective_at: new Date().toISOString(),
         raw: location,
-      });
+      }, { onConflict: "listing_id,location_id" });
 
     if (inventoryError) throw inventoryError;
   }
