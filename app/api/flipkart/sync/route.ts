@@ -252,6 +252,13 @@ async function upsertShipmentGraph(
   }
 
   if (shipment.shipmentId && firstItem) {
+    const { data: existingShipment } = await supabaseAdmin
+      .from("shipments")
+      .select("id,state")
+      .eq("user_id", userId)
+      .eq("flipkart_shipment_id", shipment.shipmentId)
+      .maybeSingle();
+
     const { data: shipmentRow, error: shipmentError } = await supabaseAdmin
       .from("shipments")
       .upsert(
@@ -277,6 +284,19 @@ async function upsertShipmentGraph(
       .single();
 
     if (shipmentError) throw shipmentError;
+
+    const nextState = firstItem.status ?? null;
+    if (existingShipment?.id && nextState && existingShipment.state !== nextState) {
+      const { error: eventError } = await supabaseAdmin.from("shipment_events").insert({
+        user_id: userId,
+        shipment_id: shipmentRow.id,
+        event_type: nextState,
+        event_timestamp: shipment.updatedAt ?? new Date().toISOString(),
+        source: "shipment_filter",
+        payload: shipment,
+      });
+      if (eventError) throw eventError;
+    }
 
     for (const item of items) {
       const { data: orderItem } = await supabaseAdmin
