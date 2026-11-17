@@ -70,10 +70,18 @@ export default function DashboardClient(props: Props) {
     let cancelled = false;
     const started = Date.now();
 
-    const poll = async () => {
+    const stages = syncing === "shipments"
+      ? [
+          { type: "shipments" as const, label: "Orders & shipment states" },
+          { type: "shipment_details" as const, label: "Shipment details & tracking" },
+          { type: "returns" as const, label: "Returns & return events" },
+        ]
+      : [{ type: "listings" as const, label: "Catalogue & inventory" }];
+
+    const poll = async (type: typeof stages[number]["type"]) => {
       while (!cancelled) {
         try {
-          const response = await fetch("/api/flipkart/sync/status?type=" + encodeURIComponent(syncing), { cache: "no-store" });
+          const response = await fetch("/api/flipkart/sync/status?type=" + encodeURIComponent(type), { cache: "no-store" });
           const result = await response.json();
           if (response.ok && result.running) {
             if (!cancelled) setSyncProgress({
@@ -85,36 +93,64 @@ export default function DashboardClient(props: Props) {
             await new Promise((resolve) => setTimeout(resolve, 1500));
             continue;
           }
-          if (!cancelled && result.status === "failed") throw new Error(result.errorMessage ?? "Sync failed");
+          if (!cancelled && result.status === "failed") {
+            throw new Error(result.errorMessage ?? "Sync failed");
+          }
           return;
         } catch (error) {
-          if (!cancelled) setSyncMessage(error instanceof Error ? error.message : "Unable to read sync status");
+          if (!cancelled) throw error;
           return;
         }
       }
     };
 
-    const syncRequest = fetch("/api/flipkart/sync/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: syncing }),
-    });
+    const runStage = async (stage: typeof stages[number]) => {
+      setSyncStage(stage.type);
+      setSyncProgress((current) => current ?? {
+        status: "starting",
+        elapsedSeconds: 0,
+        estimatedTotalSeconds: 180,
+        recordsWritten: 0,
+      });
 
-    poll();
-
-    syncRequest.then(async (response) => {
+      const pollPromise = poll(stage.type);
+      const response = await fetch("/api/flipkart/sync/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: stage.type }),
+      });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error ?? "Sync failed");
-      if (!cancelled) {
-        setSyncMessage(syncing === "listings" ? `Catalogue sync complete: ${result.recordsWritten ?? 0} listings written.` : `Fulfilment sync complete: ${result.recordsWritten ?? 0} shipments written.`);
-        window.location.reload();
+      if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
+      await pollPromise;
+      return result;
+    };
+
+    (async () => {
+      try {
+        for (const stage of stages) {
+          if (cancelled) return;
+          await runStage(stage);
+        }
+        if (!cancelled) {
+          setSyncMessage(syncing === "listings"
+            ? "Catalogue sync complete."
+            : "Fulfilment sync complete: orders, shipment details, tracking and returns reconciled.");
+          window.location.reload();
+        }
+      } catch (error) {
+        if (!cancelled) setSyncMessage(error instanceof Error ? error.message : "Sync failed");
       }
-    }).catch((error) => {
-      if (!cancelled) setSyncMessage(error instanceof Error ? error.message : "Sync failed");
-    });
+    })();
 
     return () => { cancelled = true; };
   }, [syncing]);
+
+  async function runSync(type: "shipments" | "listings") {
+    setSyncMessage(null);
+    setSyncStage(type);
+    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
+    setSyncing(type);
+  }
 
   async function runSync(type: "shipments" | "listings") {
     setSyncMessage(null);
