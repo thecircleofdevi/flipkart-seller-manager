@@ -11,35 +11,18 @@ type Listing = {
   sku_id?: string;
   price?: { mrp?: number; selling_price?: number; currency?: string };
   listing_status?: string;
-  shipping_fees?: {
-    local?: number;
-    zonal?: number;
-    national?: number;
-    currency?: string;
-  };
+  shipping_fees?: { local?: number; zonal?: number; national?: number; currency?: string };
   fulfillment_profile?: string;
-  fulfillment?: {
-    dispatch_sla?: number;
-    shipping_provider?: string;
-    procurement_type?: string;
-  };
+  fulfillment?: { dispatch_sla?: number; shipping_provider?: string; procurement_type?: string };
   tax?: { hsn?: string; tax_code?: string };
-  locations?: Array<{
-    id?: string;
-    status?: string;
-    inventory?: number;
-  }>;
+  locations?: Array<{ id?: string; status?: string; inventory?: number }>;
   [key: string]: unknown;
 };
 
 type SearchResponse = {
   next_page_id?: string | null;
   has_more?: boolean;
-  listings?: Array<{
-    listing_id: string;
-    product_id: string;
-    sku_id: string;
-  }>;
+  listings?: Array<{ listing_id: string; product_id: string; sku_id: string }>;
 };
 
 type DetailResponse = {
@@ -47,6 +30,8 @@ type DetailResponse = {
   unavailable?: string[];
   invalid?: string[];
 };
+
+type FlipkartResponse<T> = Awaited<ReturnType<typeof flipkartRequest<T>>>;
 
 function requiredEnv(name: string) {
   const value = process.env[name];
@@ -60,7 +45,11 @@ function assertAuthorized(request: Request) {
   }
 }
 
-async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 4) {
+async function requestWithRetry<T>(
+  path: string,
+  init: RequestInit,
+  attempts = 4,
+): Promise<FlipkartResponse<T>> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -69,9 +58,7 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 4
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      if (!/Flipkart API (500|502|503|504)/.test(message) || attempt === attempts - 1) {
-        throw error;
-      }
+      if (!/Flipkart API (500|502|503|504)/.test(message) || attempt === attempts - 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
     }
   }
@@ -80,31 +67,26 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 4
 }
 
 async function upsertListing(userId: string, runId: string, sku: string, listing: Listing) {
-  let listingDbId: string;
-
   const { data: row, error: listingError } = await supabaseAdmin
     .from("listings")
-    .upsert(
-      {
-        user_id: userId,
-        flipkart_listing_id: listing.listing_id ?? null,
-        sku,
-        status: listing.listing_status ?? null,
-        procurement_type: listing.fulfillment?.procurement_type ?? null,
-        fulfillment_profile: listing.fulfillment_profile ?? null,
-        shipping_provider: listing.fulfillment?.shipping_provider ?? null,
-        dispatch_sla: listing.fulfillment?.dispatch_sla ?? null,
-        hsn: listing.tax?.hsn ?? null,
-        listing_data: listing,
-        raw: listing,
-      },
-      { onConflict: "user_id,sku" },
-    )
+    .upsert({
+      user_id: userId,
+      flipkart_listing_id: listing.listing_id ?? null,
+      sku,
+      status: listing.listing_status ?? null,
+      procurement_type: listing.fulfillment?.procurement_type ?? null,
+      fulfillment_profile: listing.fulfillment_profile ?? null,
+      shipping_provider: listing.fulfillment?.shipping_provider ?? null,
+      dispatch_sla: listing.fulfillment?.dispatch_sla ?? null,
+      hsn: listing.tax?.hsn ?? null,
+      listing_data: listing,
+      raw: listing,
+    }, { onConflict: "user_id,sku" })
     .select("id")
     .single();
 
   if (listingError) throw listingError;
-  listingDbId = row.id;
+  const listingDbId = row.id;
 
   if (listing.price) {
     const { error } = await supabaseAdmin.from("listing_prices").insert({
@@ -127,15 +109,12 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
 
     const { data: locationRow, error: locationError } = await supabaseAdmin
       .from("locations")
-      .upsert(
-        {
-          user_id: userId,
-          flipkart_location_id: location.id,
-          status: location.status?.toLowerCase() === "disabled" ? "inactive" : "active",
-          raw: location,
-        },
-        { onConflict: "user_id,flipkart_location_id" },
-      )
+      .upsert({
+        user_id: userId,
+        flipkart_location_id: location.id,
+        status: location.status?.toLowerCase() === "disabled" ? "inactive" : "active",
+        raw: location,
+      }, { onConflict: "user_id,flipkart_location_id" })
       .select("id")
       .single();
 
@@ -143,15 +122,12 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
 
     const { error: linkError } = await supabaseAdmin
       .from("listing_locations")
-      .upsert(
-        {
-          user_id: userId,
-          listing_id: listingDbId,
-          location_id: locationRow.id,
-          status: location.status ?? null,
-        },
-        { onConflict: "listing_id,location_id" },
-      );
+      .upsert({
+        user_id: userId,
+        listing_id: listingDbId,
+        location_id: locationRow.id,
+        status: location.status ?? null,
+      }, { onConflict: "listing_id,location_id" });
 
     if (linkError) throw linkError;
 
@@ -202,16 +178,16 @@ export async function POST(request: Request) {
     let written = 0;
 
     while (true) {
-      const result = await requestWithRetry<SearchResponse>("/sellers/listings/v3/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filters: {},
-          page_id: pageId,
-        }),
-      });
+      const result: FlipkartResponse<SearchResponse> = await requestWithRetry<SearchResponse>(
+        "/sellers/listings/v3/search",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filters: {}, page_id: pageId }),
+        },
+      );
 
-      const listings = result.data.listings ?? [];
+      const listings: NonNullable<SearchResponse["listings"]> = result.data.listings ?? [];
       seen += listings.length;
 
       for (let i = 0; i < listings.length; i += 10) {
@@ -219,10 +195,11 @@ export async function POST(request: Request) {
         const skuIds = batch.map((item) => item.sku_id);
         if (!skuIds.length) continue;
 
-        const detail = await requestWithRetry<DetailResponse>(
-          `/sellers/listings/v3/${skuIds.map(encodeURIComponent).join(",")}`,
-          { method: "GET" },
-        );
+        const detail: FlipkartResponse<DetailResponse> =
+          await requestWithRetry<DetailResponse>(
+            `/sellers/listings/v3/${skuIds.map(encodeURIComponent).join(",")}`,
+            { method: "GET" },
+          );
 
         for (const [sku, listing] of Object.entries(detail.data.available ?? {})) {
           await upsertListing(userId, run.id, sku, listing);
@@ -254,14 +231,11 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
 
     if (runId) {
-      await supabaseAdmin
-        .from("sync_runs")
-        .update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          error_message: message,
-        })
-        .eq("id", runId);
+      await supabaseAdmin.from("sync_runs").update({
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        error_message: message,
+      }).eq("id", runId);
     }
 
     return NextResponse.json(
