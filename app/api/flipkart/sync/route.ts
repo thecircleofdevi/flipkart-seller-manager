@@ -79,9 +79,6 @@ const states: Record<FilterType, readonly string[]> = {
     "SHIPPED",
     "DELIVERED",
     "PICKUP_COMPLETE",
-    "RETURN_REQUESTED",
-    "RETURNED",
-    "COMPLETED",
   ],
   cancelled: ["CANCELLED"],
 };
