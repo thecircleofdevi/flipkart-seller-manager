@@ -308,7 +308,10 @@ export async function POST() {
         nextPath = result.data.hasMore && result.data.nextPageUrl
           ? (() => {
               const url = new URL(result.data.nextPageUrl, "https://api.flipkart.net");
-              return url.pathname + url.search;
+              const pathname = url.pathname.startsWith("/sellers/")
+                ? url.pathname
+                : `/sellers${url.pathname}`;
+              return pathname + url.search;
             })()
           : "";
         page++;
