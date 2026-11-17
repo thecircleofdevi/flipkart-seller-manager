@@ -19,14 +19,23 @@ export async function getFlipkartAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > now + 60_000) return cachedToken.accessToken;
 
   const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
-  const response = await fetch(TOKEN_URL, {
-    method: "GET",
-    headers: { Authorization: `Basic ${basic}`, Accept: "application/json" },
-    cache: "no-store",
-  });
+  let response: Response | null = null;
+  let body = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    response = await fetch(TOKEN_URL, {
+      method: "GET",
+      headers: { Authorization: `Basic ${basic}`, Accept: "application/json" },
+      cache: "no-store",
+    });
+    body = await response.text();
+    if (response.ok) break;
+    if (![500, 503].includes(response.status) || attempt === 2) {
+      throw new Error(`Flipkart token request failed with status ${response.status}: ${body.slice(0, 500)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+  }
 
-  const body = await response.text();
-  if (!response.ok) throw new Error(`Flipkart token request failed with status ${response.status}: ${body.slice(0, 500)}`);
+  if (!response || !response.ok) throw new Error("Flipkart token request failed.");
 
   let token: FlipkartTokenResponse;
   try { token = JSON.parse(body) as FlipkartTokenResponse; }
