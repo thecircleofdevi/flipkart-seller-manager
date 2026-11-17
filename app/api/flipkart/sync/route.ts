@@ -74,8 +74,9 @@ function ownerId() {
 async function upsertShipmentGraph(userId: string, shipment: ShipmentPayload) {
   const firstItem = shipment.orderItems?.[0];
 
+  let locationDbId: string | null = null;
   if (shipment.locationId) {
-    const { error } = await supabaseAdmin.from("locations").upsert(
+    const { data, error } = await supabaseAdmin.from("locations").upsert(
       {
         user_id: userId,
         flipkart_location_id: shipment.locationId,
@@ -83,8 +84,9 @@ async function upsertShipmentGraph(userId: string, shipment: ShipmentPayload) {
         raw: { locationId: shipment.locationId },
       },
       { onConflict: "user_id,flipkart_location_id" },
-    );
+    ).select("id").single();
     if (error) throw error;
+    locationDbId = data.id;
   }
 
   for (const item of shipment.orderItems ?? []) {
@@ -180,7 +182,7 @@ async function upsertShipmentGraph(userId: string, shipment: ShipmentPayload) {
             user_id: userId,
             flipkart_shipment_id: shipment.shipmentId,
             order_id: order.id,
-            location_id: shipment.locationId ?? null,
+            location_id: locationDbId,
             state: item.status ?? null,
             shipment_type: shipment.shipmentType ?? null,
             service_profile: item.serviceProfile ?? null,
@@ -188,6 +190,8 @@ async function upsertShipmentGraph(userId: string, shipment: ShipmentPayload) {
             mps: shipment.mps ?? false,
             dispatch_after: shipment.dispatchAfterDate ?? null,
             dispatch_by: shipment.dispatchByDate ?? null,
+            invoice_data: {},
+            address_data: {},
             raw: shipment,
           },
           { onConflict: "user_id,flipkart_shipment_id" },
@@ -225,13 +229,15 @@ async function upsertShipmentGraph(userId: string, shipment: ShipmentPayload) {
       {
         user_id: userId,
         flipkart_shipment_id: shipment.shipmentId,
-        location_id: shipment.locationId ?? null,
+        location_id: locationDbId,
         state: null,
         shipment_type: shipment.shipmentType ?? null,
         hold: shipment.hold ?? false,
         mps: shipment.mps ?? false,
         dispatch_after: shipment.dispatchAfterDate ?? null,
         dispatch_by: shipment.dispatchByDate ?? null,
+        invoice_data: {},
+        address_data: {},
         raw: shipment,
       },
       { onConflict: "user_id,flipkart_shipment_id" },
@@ -319,8 +325,9 @@ export async function POST() {
 
     return NextResponse.json({ ok: true, recordsSeen: totalSeen, recordsWritten: totalWritten });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown sync error";
     return NextResponse.json(
-      { ok: false, error: error instanceof Error ? error.message : "Unknown sync error" },
+      { ok: false, error: message },
       { status: 500 },
     );
   }
