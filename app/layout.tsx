@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Flipkart Seller Manager",
-  description: "Personal Flipkart seller operations dashboard"
+  title: "Seller Manager",
+  description: "A focused operations workspace for Flipkart sellers",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
