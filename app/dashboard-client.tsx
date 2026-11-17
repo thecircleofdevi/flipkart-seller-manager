@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type NavKey = "overview" | "orders" | "shipments" | "listings" | "returns" | "sync" | "settings";
 
@@ -43,6 +43,7 @@ export default function DashboardClient(props: Props) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{ status: string; elapsedSeconds: number; estimatedTotalSeconds: number; recordsWritten: number } | null>(null);
 
   const filteredShipments = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -58,16 +59,61 @@ export default function DashboardClient(props: Props) {
   const pageSize = 50;
   const visibleOrders = filteredOrders.slice((orderPage - 1) * pageSize, orderPage * pageSize);
   const visibleListings = filteredListings.slice((listingPage - 1) * pageSize, listingPage * pageSize);
-  async function runSync(type: "shipments" | "listings") {
-    setSyncing(type); setSyncMessage(null);
-    try {
-      const response = await fetch("/api/flipkart/sync/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type }) });
-      const result = await response.json();
+  useEffect(() => {
+    if (!syncing) return;
+    let cancelled = false;
+    const started = Date.now();
+
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const response = await fetch("/api/flipkart/sync/status?type=" + encodeURIComponent(syncing), { cache: "no-store" });
+          const result = await response.json();
+          if (response.ok && result.running) {
+            if (!cancelled) setSyncProgress({
+              status: result.status,
+              elapsedSeconds: Math.max(0, Math.floor((Date.now() - started) / 1000)),
+              estimatedTotalSeconds: result.estimatedTotalSeconds ?? 180,
+              recordsWritten: result.recordsWritten ?? 0,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            continue;
+          }
+          if (!cancelled && result.status === "failed") throw new Error(result.errorMessage ?? "Sync failed");
+          return;
+        } catch (error) {
+          if (!cancelled) setSyncMessage(error instanceof Error ? error.message : "Unable to read sync status");
+          return;
+        }
+      }
+    };
+
+    const syncRequest = fetch("/api/flipkart/sync/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: syncing }),
+    });
+
+    poll();
+
+    syncRequest.then(async (response) => {
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error ?? "Sync failed");
-      setSyncMessage(type === "listings" ? `Catalogue sync complete: ${result.recordsWritten ?? 0} listings written.` : `Fulfilment sync complete: ${result.recordsWritten ?? 0} shipments written.`);
-      window.location.reload();
-    } catch (error) { setSyncMessage(error instanceof Error ? error.message : "Sync failed"); }
-    finally { setSyncing(null); }
+      if (!cancelled) {
+        setSyncMessage(syncing === "listings" ? `Catalogue sync complete: ${result.recordsWritten ?? 0} listings written.` : `Fulfilment sync complete: ${result.recordsWritten ?? 0} shipments written.`);
+        window.location.reload();
+      }
+    }).catch((error) => {
+      if (!cancelled) setSyncMessage(error instanceof Error ? error.message : "Sync failed");
+    });
+
+    return () => { cancelled = true; };
+  }, [syncing]);
+
+  async function runSync(type: "shipments" | "listings") {
+    setSyncMessage(null);
+    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
+    setSyncing(type);
   }
 
   return (
