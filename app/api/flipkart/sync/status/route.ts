@@ -10,7 +10,10 @@ export async function GET(request: Request) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
-  const type = new URL(request.url).searchParams.get("type") === "listings" ? "listings" : "shipments";
+  const requestedType = new URL(request.url).searchParams.get("type");
+    const type = ["shipments", "shipment_details", "returns", "listings"].includes(requestedType ?? "")
+      ? requestedType!
+      : "shipments";
   const { data: latest } = await supabaseAdmin
     .from("sync_runs")
     .select("id,status,started_at,finished_at,records_written,error_message")
