@@ -288,6 +288,7 @@ export async function POST() {
       let page = 0;
 
       while (nextPath) {
+        const isFirstPage = page === 0;
         const body = {
           filter: { type, states: typeStates },
           pagination: { pageSize: 20 },
@@ -295,18 +296,23 @@ export async function POST() {
         };
 
         const requestStarted = Date.now();
-        const result = await flipkartRequestWithRetry<ShipmentFilterResponse>(nextPath, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
+        const result = await flipkartRequestWithRetry<ShipmentFilterResponse>(
+          nextPath,
+          isFirstPage
+            ? {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              }
+            : { method: "GET" },
+        );
 
         const shipments = result.data.shipments ?? [];
         totalSeen += shipments.length;
 
         await supabaseAdmin.from("api_requests").insert({
           user_id: userId,
-          method: "POST",
+          method: isFirstPage ? "POST" : "GET",
           endpoint: nextPath,
           status_code: result.status,
           started_at: new Date(requestStarted).toISOString(),
