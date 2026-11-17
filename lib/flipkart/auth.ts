@@ -21,7 +21,7 @@ export async function getFlipkartAccessToken(): Promise<string> {
   const basic = Buffer.from(`${appId}:${appSecret}`).toString("base64");
   let response: Response | null = null;
   let body = "";
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     response = await fetch(TOKEN_URL, {
       method: "GET",
       headers: { Authorization: `Basic ${basic}`, Accept: "application/json" },
@@ -29,7 +29,7 @@ export async function getFlipkartAccessToken(): Promise<string> {
     });
     body = await response.text();
     if (response.ok) break;
-    if (![500, 503].includes(response.status) || attempt === 2) {
+    if (![500, 502, 503, 504].includes(response.status) || attempt === 4) {
       throw new Error(`Flipkart token request failed with status ${response.status}: ${body.slice(0, 500)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
