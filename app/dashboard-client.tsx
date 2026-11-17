@@ -12,6 +12,8 @@ type Props = {
   shipments: { id: string; flipkart_shipment_id: string | null; state: string | null; dispatch_by: string | null; tracking_id: string | null; courier_name: string | null }[];
   lowStock: number;
   systemHealthy: boolean;
+  orders: { id: string; flipkart_order_id: string | null; order_date: string | null; status: string | null }[];
+  listings: { id: string; sku: string | null; fsn: string | null; status: string | null; procurement_type: string | null; shipping_provider: string | null; updated_at: string | null }[];
 };
 
 const nav: { id: NavKey; label: string; icon: string }[] = [
@@ -44,6 +46,8 @@ export default function DashboardClient(props: Props) {
   }, [query, props.shipments]);
 
   const title = nav.find((item) => item.id === active)?.label ?? "Overview";
+  const filteredOrders = useMemo(() => { const q = query.trim().toLowerCase(); if (!q) return props.orders; return props.orders.filter((o) => [o.flipkart_order_id, o.status].some((v) => v?.toLowerCase().includes(q))); }, [query, props.orders]);
+  const filteredListings = useMemo(() => { const q = query.trim().toLowerCase(); if (!q) return props.listings; return props.listings.filter((l) => [l.sku, l.fsn, l.status, l.procurement_type, l.shipping_provider].some((v) => v?.toLowerCase().includes(q))); }, [query, props.listings]);
 
   return (
     <div className="app-shell">
@@ -97,7 +101,7 @@ export default function DashboardClient(props: Props) {
 
             <section className="section">
               <div className="section-head"><h2 className="section-title">Workspace</h2><span className="live-pill"><i /> Live snapshot</span></div>
-              <div className="stats">{props.metrics.map((m) => <button className="card stat-card" key={m.label} onClick={() => setActive(m.label.toLowerCase() as NavKey)}><div className="stat-top"><span>{m.label}</span><span className="stat-icon">{m.icon}</span></div><div className="stat-value">{m.value}</div><div className="stat-caption">{m.caption}</div><span className="card-arrow">↗</span></button>)}</div>
+              <div className="stats">{props.metrics.map((m) => <button className="card stat-card" key={m.label} onClick={() => setActive((m.label === "Notifications" ? "sync" : m.label.toLowerCase()) as NavKey)}><div className="stat-top"><span>{m.label}</span><span className="stat-icon">{m.icon}</span></div><div className="stat-value">{m.value}</div><div className="stat-caption">{m.caption}</div><span className="card-arrow">↗</span></button>)}</div>
             </section>
 
             <section className="section grid-2">
@@ -125,8 +129,8 @@ export default function DashboardClient(props: Props) {
             {active === "shipments" && <div className="table-card"><div className="table-toolbar"><span>Fulfilment queue</span><span>{filteredShipments.length} visible</span></div>{filteredShipments.length ? filteredShipments.map((s) => <div className="table-row" key={s.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div><span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span><span className="row-date">{date(s.dispatch_by)}</span></div>) : <div className="empty big">No shipments match your search.</div>}</div>}
             {active === "returns" && <div className="table-card">{props.returns.length ? props.returns.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{r.status ?? "Return"}</strong><small>{r.return_reason ?? "Reason not supplied"}</small></div></div><span className="badge">{date(r.created_at)}</span></div>) : <div className="empty big">No open returns. Your return desk is clear.</div>}</div>}
             {active === "sync" && <div className="table-card">{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
-            {active === "orders" && <div className="empty-state"><div className="empty-orb">▦</div><h3>Orders, next.</h3><p>The data layer is ready. This workspace will become the detailed order cockpit with search, status lanes and contextual actions.</p></div>}
-            {active === "listings" && <div className="empty-state"><div className="empty-orb">◈</div><h3>Catalogue control.</h3><p>Listings are already syncing. The next layer is a high-density catalogue view with inventory, pricing and listing health.</p></div>}
+            {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><span>{filteredOrders.length} visible</span></div>{filteredOrders.length ? filteredOrders.map((o) => <div className="table-row" key={o.id}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span></div>) : <div className="empty big">No orders match your search.</div>}</div>}
+            {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} visible</span></div>{filteredListings.length ? filteredListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span></div>) : <div className="empty big">No listings match your search.</div>}</div>}
             {active === "settings" && <div className="settings-grid"><div className="card setting-card"><span className="setting-icon">◉</span><div><strong>Flipkart connection</strong><p>Authenticated seller API connection is configured server-side.</p></div><span className="badge good">Connected</span></div><div className="card setting-card"><span className="setting-icon">◌</span><div><strong>Data health</strong><p>Supabase is serving the seller workspace.</p></div><span className="badge good">Healthy</span></div></div>}
           </section>
         )}
@@ -134,7 +138,7 @@ export default function DashboardClient(props: Props) {
         <footer className="footer-note">Seller Manager · Quiet by default. Powerful when needed.</footer>
       </main>
 
-      {commandOpen && <div className="command-backdrop" onClick={() => setCommandOpen(false)}><div className="command" onClick={(e) => e.stopPropagation()}><div className="command-head"><span>Quick actions</span><button onClick={() => setCommandOpen(false)}>Esc</button></div><button onClick={() => { setActive("shipments"); setCommandOpen(false); }}>→ Open fulfilment queue</button><button onClick={() => { setActive("returns"); setCommandOpen(false); }}>↺ Review returns</button><button onClick={() => { setActive("sync"); setCommandOpen(false); }}>◌ Inspect sync health</button><button onClick={() => { setActive("listings"); setCommandOpen(false); }}>◈ Open catalogue</button></div></div>}
+      {commandOpen && <div className="command-backdrop" onClick={() => setCommandOpen(false)}><div className="command" onClick={(e) => e.stopPropagation()}><div className="command-head"><span>Quick actions</span><button onClick={() => setCommandOpen(false)}>Esc</button></div><button onClick={() => { setActive("shipments"); setCommandOpen(false); }}>→ Open fulfilment queue</button><button onClick={() => { setActive("returns"); setCommandOpen(false); }}>↺ Review returns</button><button onClick={() => { setActive("sync"); setCommandOpen(false); }}>◌ Inspect sync health</button><button onClick={() => { setActive("listings"); setCommandOpen(false); }}>◈ Open catalogue</button><button onClick={() => { setActive("orders"); setCommandOpen(false); }}>▦ Open orders</button></div></div>}
     </div>
   );
 }
