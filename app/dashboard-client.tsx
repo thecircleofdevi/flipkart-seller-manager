@@ -32,7 +32,13 @@ function date(value: string | null) {
   return new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-function formatDuration(seconds: number) {\n  const minutes = Math.floor(seconds / 60);\n  const secs = Math.max(0, seconds % 60);\n  return minutes ? `${minutes}m ${secs}s` : `${secs}s`;\n}\n\nfunction initials(email: string) {
+function formatDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.max(0, seconds % 60);
+  return minutes ? `${minutes}m ${secs}s` : `${secs}s`;
+}
+
+function initials(email: string) {
   return (email.slice(0, 2) || "SM").toUpperCase();
 }
 
