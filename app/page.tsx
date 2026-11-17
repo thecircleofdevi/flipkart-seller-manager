@@ -23,7 +23,7 @@ export default async function Home() {
 
   if (!user) redirect("/login");
 
-  const [metricResults, recentSyncs, openReturns, activeShipments, inventory, recentOrders, listings] = await Promise.all([
+  const [metricResults, recentSyncs, openReturns, activeShipments, inventory, recentOrders, listings, failedNotifications] = await Promise.all([
     Promise.all(metricTables.map(({ table }) => countRows(supabase, table))),
     supabase.from("sync_runs").select("id,sync_type,status,started_at,finished_at,records_written,error_message").order("started_at", { ascending: false }).limit(12),
     supabase.from("returns").select("id,status,return_reason,created_at").in("status", ["CREATED", "created", "OPEN", "open"]).order("created_at", { ascending: false }).limit(12),
@@ -31,9 +31,12 @@ export default async function Home() {
     supabase.from("listing_inventory").select("id,listing_id,quantity,effective_at").order("quantity", { ascending: true }).limit(50),
     supabase.from("orders").select("id,flipkart_order_id,order_date,status").order("order_date", { ascending: false }).limit(20),
     supabase.from("listings").select("id,sku,fsn,status,procurement_type,shipping_provider,updated_at").order("updated_at", { ascending: false }).limit(30),
+    supabase.from("notifications").select("id,event_type,processing_status,processing_error,received_at").eq("processing_status", "failed").order("received_at", { ascending: false }).limit(12),
   ]);
 
-  const failed = [...metricResults, { error: recentSyncs.error }, { error: openReturns.error }, { error: activeShipments.error }, { error: inventory.error }].some((result) => result.error);
+  const failed = [...metricResults, { error: recentSyncs.error }, { error: openReturns.error }, { error: activeShipments.error }, { error: inventory.error }, { error: failedNotifications.error }].some((result) => result.error);
+  const failedSyncs = (recentSyncs.data ?? []).filter((r) => r.status === "failed");
+  const overdueShipments = (activeShipments.data ?? []).filter((s) => s.dispatch_by && new Date(s.dispatch_by).getTime() < Date.now());
   const lowStock = (inventory.data ?? []).filter((row) => (row.quantity ?? 0) <= 3).length;
 
   return (
@@ -47,6 +50,7 @@ export default async function Home() {
       systemHealthy={!failed}
       orders={(recentOrders.data ?? []).map((o) => ({ id: o.id, flipkart_order_id: o.flipkart_order_id, order_date: o.order_date, status: o.status }))}
       listings={(listings.data ?? []).map((l) => ({ id: l.id, sku: l.sku, fsn: l.fsn, status: l.status, procurement_type: l.procurement_type, shipping_provider: l.shipping_provider, updated_at: l.updated_at }))}
+      attention={{ overdueShipments: overdueShipments.length, failedSyncs: failedSyncs.length, failedNotifications: failedNotifications.data?.length ?? 0 }}
     />
   );
 }
