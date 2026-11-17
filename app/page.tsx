@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
 import DashboardClient from "./dashboard-client";
 
 const metricTables = [
@@ -20,9 +21,7 @@ export default async function Home() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  if (!user) {
-    return <main className="auth-gate"><div className="auth-card"><div className="brand-mark">FK</div><h1>Seller Manager</h1><p>Sign in to view your Flipkart operations workspace.</p></div></main>;
-  }
+  if (!user) redirect("/login");
 
   const [metricResults, recentSyncs, openReturns, activeShipments, inventory] = await Promise.all([
     Promise.all(metricTables.map(({ table }) => countRows(supabase, table))),
