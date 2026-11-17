@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { POST as runShipmentSync } from "@/app/api/flipkart/sync/route";
 import { POST as runListingSync } from "@/app/api/flipkart/sync/listings/route";
+import { POST as runShipmentDetailsSync } from "@/app/api/flipkart/sync/details/route";
+import { POST as runReturnsSync } from "@/app/api/flipkart/sync/returns/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -19,7 +21,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const type = body?.type;
 
-  if (type !== "shipments" && type !== "listings") {
+  if (!["shipments", "shipment_details", "returns", "listings"].includes(type)) {
     return NextResponse.json(
       { ok: false, error: "Invalid sync type" },
       { status: 400 },
@@ -50,7 +52,11 @@ export async function POST(request: Request) {
   const response =
     type === "listings"
       ? await runListingSync(internalRequest)
-      : await runShipmentSync(internalRequest);
+      : type === "shipment_details"
+        ? await runShipmentDetailsSync(internalRequest)
+        : type === "returns"
+          ? await runReturnsSync(internalRequest)
+          : await runShipmentSync(internalRequest);
 
   const result = await response
     .clone()
