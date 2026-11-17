@@ -9,6 +9,10 @@ type FlipkartTokenResponse = {
 
 let cachedToken: { accessToken: string; expiresAt: number } | null = null;
 
+export function invalidateFlipkartAccessToken() {
+  cachedToken = null;
+}
+
 export async function getFlipkartAccessToken(): Promise<string> {
   const appId = process.env.FLIPKART_APP_ID;
   const appSecret = process.env.FLIPKART_APP_SECRET;
