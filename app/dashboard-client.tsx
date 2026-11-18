@@ -74,48 +74,127 @@ export default function DashboardClient(props: Props) {
     const stages = syncing === "shipments"
       ? [
           { type: "shipments" as const, label: "Orders & shipment states" },
-          { type: "shipment_details" as const, label: "Shipment details & tracking" },
+          { type: "shipment_details" as const, label: "Shipment details, buyer, packages & forms" },
           { type: "returns" as const, label: "Returns & return events" },
         ]
-      : [{ type: "listings" as const, label: "Catalogue & inventory" }];
+      : [
+          { type: "listings" as const, label: "Catalogue, inventory & pricing" },
+          { type: "product_search" as const, label: "Product catalogue enrichment" },
+        ];
 
-    const poll = async (type: typeof stages[number]["type"]) => {
-      while (!cancelled) {
-        try {
-          const response = await fetch("/api/flipkart/sync/status?type=" + encodeURIComponent(type), { cache: "no-store" });
-          const result = await response.json();
-          if (response.ok && result.running) {
-            if (!cancelled) setSyncProgress({
-              status: result.status,
-              elapsedSeconds: Math.max(0, Math.floor((Date.now() - started) / 1000)),
-              estimatedTotalSeconds: result.estimatedTotalSeconds ?? 180,
-              recordsWritten: result.recordsWritten ?? 0,
-            });
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            continue;
-          }
-          if (!cancelled && result.status === "failed") {
-            throw new Error(result.errorMessage ?? "Sync failed");
-          }
-          return;
-        } catch (error) {
-          if (!cancelled) throw error;
-          return;
-        }
+    const runPaged = async (
+      type: "returns" | "listings",
+      extra: Record<string, unknown> = {},
+    ) => {
+      let syncRunId: string | null = null;
+      let cursor: Record<string, unknown> = { ...extra };
+      let hasMore = true;
+      let recordsWritten = 0;
+
+      while (hasMore && !cancelled) {
+        const response: Response = await fetch("/api/flipkart/sync/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type, ...cursor, ...(syncRunId ? { syncRunId } : {}) }),
+        });
+        const result: Record<string, unknown> = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error((result.error as string) ?? type + " failed");
+
+        syncRunId = (result.syncRunId as string) ?? syncRunId;
+        hasMore = Boolean(result.hasMore);
+        recordsWritten = Number(result.recordsWritten ?? result.listingsWritten ?? 0);
+        cursor = {
+          ...cursor,
+          nextUrl: result.nextUrl ?? cursor.nextUrl,
+          pageId: result.pageId ?? cursor.pageId,
+          pendingSkuIds: result.pendingSkuIds ?? cursor.pendingSkuIds,
+          batchNo: result.nextBatchNo ?? cursor.batchNo,
+          currentSource: result.currentSource ?? cursor.currentSource,
+          modifiedAfter: result.modifiedAfter ?? cursor.modifiedAfter,
+          modifiedBefore: result.modifiedBefore ?? cursor.modifiedBefore,
+        };
+
+        setSyncProgress({
+          status: hasMore ? "running" : "success",
+          elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+          estimatedTotalSeconds: 180,
+          recordsWritten,
+        });
       }
     };
 
     const runStage = async (stage: typeof stages[number]) => {
       setSyncStage(stage.type);
-      setSyncProgress({
-        status: "running",
-        elapsedSeconds: 0,
-        estimatedTotalSeconds: 180,
-        recordsWritten: 0,
-      });
+      setSyncProgress({ status: "running", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
 
-      if (stage.type !== "shipments") {
-        const pollPromise = poll(stage.type);
+      if (stage.type === "shipments") {
+        const filterJobs: Array<{ filterType: "preDispatch" | "postDispatch" | "cancelled"; shipmentType?: "NORMAL" | "SELF" }> = [
+          { filterType: "preDispatch" },
+          { filterType: "postDispatch", shipmentType: "NORMAL" },
+          { filterType: "postDispatch", shipmentType: "SELF" },
+          { filterType: "cancelled" },
+        ];
+
+        for (const job of filterJobs) {
+          let nextPageUrl: string | null = null;
+          let syncRunId: string | null = null;
+          let modifiedFrom: string | undefined;
+          let modifiedTo: string | undefined;
+          let hasMore = true;
+
+          while (hasMore && !cancelled) {
+            const response: Response = await fetch("/api/flipkart/sync/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "shipments",
+                filterType: job.filterType,
+                shipmentType: job.shipmentType,
+                nextPageUrl,
+                syncRunId,
+                modifiedFrom,
+                modifiedTo,
+              }),
+            });
+            const result: { ok?: boolean; error?: string; syncRunId?: string; nextPageUrl?: string | null; modifiedFrom?: string; modifiedTo?: string; hasMore?: boolean; recordsWritten?: number } = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
+
+            syncRunId = result.syncRunId ?? syncRunId;
+            nextPageUrl = result.nextPageUrl ?? null;
+            modifiedFrom = result.modifiedFrom ?? modifiedFrom;
+            modifiedTo = result.modifiedTo ?? modifiedTo;
+            hasMore = Boolean(result.hasMore);
+
+            setSyncProgress({
+              status: hasMore ? "running" : "success",
+              elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+              estimatedTotalSeconds: 180,
+              recordsWritten: result.recordsWritten ?? 0,
+            });
+          }
+        }
+        return;
+      }
+
+      if (stage.type === "shipment_details") {
+        const pollPromise = (async () => {
+          while (!cancelled) {
+            const response = await fetch("/api/flipkart/sync/status?type=shipment_details", { cache: "no-store" });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.running) {
+              if (result.status === "failed") throw new Error(result.errorMessage ?? "Shipment details failed");
+              return;
+            }
+            setSyncProgress({
+              status: "running",
+              elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+              estimatedTotalSeconds: result.estimatedTotalSeconds ?? 180,
+              recordsWritten: result.recordsWritten ?? 0,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+          }
+        })();
+
         const response = await fetch("/api/flipkart/sync/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -124,54 +203,43 @@ export default function DashboardClient(props: Props) {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
         await pollPromise;
-        return result;
+        return;
       }
 
-      const filterTypes = ["preDispatch", "postDispatch", "cancelled"] as const;
-      let totalWritten = 0;
+      if (stage.type === "returns") {
+        await runPaged("returns", { mode: "incremental" });
+        return;
+      }
 
-      for (const filterType of filterTypes) {
-        let nextPageUrl: string | null = null;
+      await runPaged("listings");
+      for (const internalState of ["ACTIVE", "INACTIVE", "READY_FOR_ACTIVATION", "ARCHIVED", "INACTIVATED_BY_FLIPKART"] as const) {
+        let batchNo = 0;
         let syncRunId: string | null = null;
-        let modifiedFrom: string | undefined;
-        let modifiedTo: string | undefined;
         let hasMore = true;
-
-        while (hasMore) {
-          const response: Response = await fetch("/api/flipkart/sync/run", {
+        while (hasMore && !cancelled) {
+          const response = await fetch("/api/flipkart/sync/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              type: "shipments",
-              filterType,
-              nextPageUrl,
-              syncRunId,
-              modifiedFrom,
-              modifiedTo,
+              type: "product_search",
+              internalState,
+              batchNo,
+              ...(syncRunId ? { syncRunId } : {}),
             }),
           });
-          const result: { ok?: boolean; error?: string; syncRunId?: string; nextPageUrl?: string | null; modifiedFrom?: string; modifiedTo?: string; hasMore?: boolean; recordsWritten?: number } = await response.json().catch(() => ({}));
+          const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
-
           syncRunId = result.syncRunId ?? syncRunId;
-          nextPageUrl = result.nextPageUrl ?? null;
-          modifiedFrom = result.modifiedFrom ?? modifiedFrom;
-          modifiedTo = result.modifiedTo ?? modifiedTo;
           hasMore = Boolean(result.hasMore);
-          totalWritten = Math.max(totalWritten, result.recordsWritten ?? 0);
-
-          if (hasMore) {
-            setSyncProgress({
-              status: "running",
-              elapsedSeconds: Math.floor((Date.now() - started) / 1000),
-              estimatedTotalSeconds: 180,
-              recordsWritten: totalWritten,
-            });
-          }
+          batchNo = result.nextBatchNo ?? batchNo + 1;
+          setSyncProgress({
+            status: hasMore ? "running" : "success",
+            elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+            estimatedTotalSeconds: 180,
+            recordsWritten: result.recordsWritten ?? 0,
+          });
         }
       }
-
-      return { ok: true, recordsWritten: totalWritten };
     };
 
     (async () => {
@@ -182,8 +250,8 @@ export default function DashboardClient(props: Props) {
         }
         if (!cancelled) {
           setSyncMessage(syncing === "listings"
-            ? "Catalogue sync complete."
-            : "Fulfilment sync complete: orders, shipment details, tracking and returns reconciled.");
+            ? "Catalogue sync complete: listings, inventory, pricing and product data reconciled."
+            : "Fulfilment sync complete: orders, shipment details, tracking, returns and events reconciled.");
           window.location.reload();
         }
       } catch (error) {
