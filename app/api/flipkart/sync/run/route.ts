@@ -41,12 +41,14 @@ export async function POST(request: Request) {
   // deployment. Deployment Protection can intercept that request before it
   // reaches the sync route. Invoke the authenticated route handler directly
   // instead, passing the same internal sync secret it expects.
+  const originalBody = await request.text();
   const internalRequest = new Request(request.url, {
     method: "POST",
     headers: {
       "x-flipkart-sync-secret": secret,
       "Content-Type": "application/json",
     },
+    body: originalBody || undefined,
   });
 
   const response =
