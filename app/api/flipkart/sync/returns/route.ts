@@ -142,7 +142,7 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
 
   const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
     user_id: userId,
-    sync_run_id: returnRunId,
+    sync_run_id: runId,
     source_type: "return",
     external_id: returnId,
     payload: item,
@@ -207,6 +207,9 @@ export async function POST(request: Request) {
       if (error) throw error;
       runId = run.id;
     }
+
+    const returnRunId = runId;
+    if (!returnRunId) throw new Error("Return sync run could not be initialized.");
 
     const returnRunId = runId;
     if (!returnRunId) throw new Error("Return sync run could not be initialized.");
