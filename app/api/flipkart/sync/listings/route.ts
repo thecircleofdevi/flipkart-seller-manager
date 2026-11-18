@@ -67,7 +67,15 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
   let productDbId: string | null = null;
 
   if (listing.product_id) {
-    const { data: product, error: productError } = await supabaseAdmin.from("products").upsert({
+    const { data: existingProduct, error: lookupError } = await supabaseAdmin
+      .from("products")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("flipkart_product_id", listing.product_id)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+
+    const productValues = {
       user_id: userId,
       flipkart_product_id: listing.product_id,
       fsn: sku,
@@ -77,9 +85,14 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
       image_url: listing.product_image_url ?? null,
       vertical: typeof listing.vertical === "string" ? listing.vertical : null,
       raw: listing,
-    }, { onConflict: "user_id,fsn" }).select("id").single();
-    if (productError) throw productError;
-    productDbId = product.id;
+    };
+
+    const productResult = existingProduct
+      ? await supabaseAdmin.from("products").update(productValues).eq("id", existingProduct.id).eq("user_id", userId).select("id").single()
+      : await supabaseAdmin.from("products").insert(productValues).select("id").single();
+
+    if (productResult.error) throw productResult.error;
+    productDbId = productResult.data.id;
   }
 
   const sellingPrice = listing.price?.selling_price ?? listing.price?.flipkart_selling_price ?? null;
