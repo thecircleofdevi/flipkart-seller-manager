@@ -464,6 +464,7 @@ export async function POST(request: Request) {
     }
 
     if (!runId) throw new Error("Shipment sync run could not be initialized.");
+    const shipmentRunId = runId;
 
     const nextPageUrl =
       typeof body?.nextPageUrl === "string" && body.nextPageUrl
@@ -556,7 +557,7 @@ export async function POST(request: Request) {
     if (apiLogError) throw apiLogError;
 
     for (const shipment of shipments) {
-      await upsertShipmentGraph(userId, runId, shipment);
+      await upsertShipmentGraph(userId, shipmentRunId, shipment);
       totalWritten++;
     }
 
