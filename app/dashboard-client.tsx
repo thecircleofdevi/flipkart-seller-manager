@@ -107,23 +107,73 @@ export default function DashboardClient(props: Props) {
 
     const runStage = async (stage: typeof stages[number]) => {
       setSyncStage(stage.type);
-      setSyncProgress((current) => current ?? {
-        status: "starting",
+      setSyncProgress({
+        status: "running",
         elapsedSeconds: 0,
         estimatedTotalSeconds: 180,
         recordsWritten: 0,
       });
 
-      const pollPromise = poll(stage.type);
-      const response = await fetch("/api/flipkart/sync/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: stage.type }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
-      await pollPromise;
-      return result;
+      if (stage.type !== "shipments") {
+        const pollPromise = poll(stage.type);
+        const response = await fetch("/api/flipkart/sync/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: stage.type }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
+        await pollPromise;
+        return result;
+      }
+
+      const filterTypes = ["preDispatch", "postDispatch", "cancelled"] as const;
+      let totalWritten = 0;
+
+      for (const filterType of filterTypes) {
+        let nextPageUrl: string | null = null;
+        let syncRunId: string | null = null;
+        let modifiedFrom: string | undefined;
+        let modifiedTo: string | undefined;
+        let hasMore = true;
+
+        while (hasMore) {
+          const pollPromise = poll("shipments");
+          const response = await fetch("/api/flipkart/sync/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "shipments",
+              filterType,
+              nextPageUrl,
+              syncRunId,
+              modifiedFrom,
+              modifiedTo,
+            }),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
+          await pollPromise;
+
+          syncRunId = result.syncRunId ?? syncRunId;
+          nextPageUrl = result.nextPageUrl ?? null;
+          modifiedFrom = result.modifiedFrom ?? modifiedFrom;
+          modifiedTo = result.modifiedTo ?? modifiedTo;
+          hasMore = Boolean(result.hasMore);
+          totalWritten = Math.max(totalWritten, result.recordsWritten ?? 0);
+
+          if (hasMore) {
+            setSyncProgress({
+              status: "running",
+              elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+              estimatedTotalSeconds: 180,
+              recordsWritten: totalWritten,
+            });
+          }
+        }
+      }
+
+      return { ok: true, recordsWritten: totalWritten };
     };
 
     (async () => {
