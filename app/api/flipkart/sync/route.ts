@@ -365,7 +365,6 @@ async function upsertShipmentGraph(
 export async function POST(request: Request) {
   const startedAt = new Date().toISOString();
   let runId: string | null = null;
-
   let totalSeen = 0;
   let totalWritten = 0;
 
@@ -373,208 +372,229 @@ export async function POST(request: Request) {
     assertAuthorized(request);
 
     const userId = getRequiredEnv("FLIPKART_OWNER_USER_ID");
+    const body = await request.json().catch(() => ({}));
 
-    const { data: run, error: runError } = await supabaseAdmin
-      .from("sync_runs")
-      .insert({
-        user_id: userId,
-        sync_type: "shipments",
-        status: "running",
-        started_at: startedAt,
-      })
-      .select("id")
-      .single();
-
-    if (runError) throw runError;
-    runId = run.id;
-
-    // Flipkart's filter API is paginated and the platform can return a 500 on a
-    // large result window. Use modifiedDate windows so one bad page does not
-    // prevent the rest of the order history from syncing.
-    const now = new Date();
-    const syncStart = new Date("2020-01-01T00:00:00.000Z");
-    const windowMs = 90 * 24 * 60 * 60 * 1000;
-
-    for (const [type, typeStates] of Object.entries(states) as [
-      FilterType,
-      readonly string[],
-    ][]) {
-      let windowFrom = syncStart;
-
-      while (windowFrom < now) {
-        const windowTo = new Date(
-          Math.min(windowFrom.getTime() + windowMs, now.getTime()),
-        );
-
-        const pendingWindows: Array<{
-          from: Date;
-          to: Date;
-          depth: number;
-        }> = [{ from: windowFrom, to: windowTo, depth: 0 }];
-
-        while (pendingWindows.length) {
-          const current = pendingWindows.pop()!;
-          let page = 0;
-          let nextPath = "/sellers/v3/shipments/filter";
-          let shouldSplit = false;
-
-          try {
-            while (nextPath) {
-              const isFirstPage = page === 0;
-              const body = {
-                filter: {
-                  type,
-                  states: typeStates,
-                  modifiedDate: {
-                    from: current.from.toISOString(),
-                    to: current.to.toISOString(),
-                  },
-                },
-                pagination: { pageSize: 20 },
-                sort: { field: "modifiedDate", order: "desc" },
-              };
-
-              const requestStarted = Date.now();
-              let result;
-
-              try {
-                result = await flipkartRequestWithRetry<ShipmentFilterResponse>(
-                  nextPath,
-                  isFirstPage
-                    ? {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(body),
-                      }
-                    : {
-                        method: "GET",
-                        headers: { "Content-Type": "application/json" },
-                      },
-                );
-              } catch (error) {
-                const message =
-                  error instanceof Error ? error.message : String(error);
-
-                await supabaseAdmin.from("api_requests").insert({
-                  user_id: userId,
-                  integration_id: null,
-                  method: isFirstPage ? "POST" : "GET",
-                  endpoint: nextPath,
-                  status_code: null,
-                  started_at: new Date(requestStarted).toISOString(),
-                  finished_at: new Date().toISOString(),
-                  duration_ms: Date.now() - requestStarted,
-                  request_meta: {
-                    filterType: type,
-                    page,
-                    modifiedFrom: current.from.toISOString(),
-                    modifiedTo: current.to.toISOString(),
-                  },
-                  response_meta: {},
-                  error_message: message,
-                });
-
-                throw error;
-              }
-
-              const shipments = result.data.shipments ?? [];
-              totalSeen += shipments.length;
-
-              const { error: apiLogError } = await supabaseAdmin
-                .from("api_requests")
-                .insert({
-                  user_id: userId,
-                  integration_id: null,
-                  method: isFirstPage ? "POST" : "GET",
-                  endpoint: nextPath,
-                  status_code: result.status,
-                  started_at: new Date(requestStarted).toISOString(),
-                  finished_at: new Date().toISOString(),
-                  duration_ms: Date.now() - requestStarted,
-                  request_meta: {
-                    filterType: type,
-                    page,
-                    modifiedFrom: current.from.toISOString(),
-                    modifiedTo: current.to.toISOString(),
-                  },
-                  response_meta: {
-                    shipmentCount: shipments.length,
-                    hasMore: result.data.hasMore ?? false,
-                    hasNextPageUrl: Boolean(result.data.nextPageUrl),
-                  },
-                });
-
-              if (apiLogError) throw apiLogError;
-
-              for (const shipment of shipments) {
-                await upsertShipmentGraph(userId, run.id, shipment);
-                totalWritten++;
-              }
-
-              if (!result.data.hasMore) {
-                nextPath = "";
-                break;
-              }
-
-              if (!result.data.nextPageUrl) {
-                throw new Error(
-                  "Flipkart returned hasMore=true without nextPageUrl.",
-                );
-              }
-
-              nextPath = normalizeFlipkartPath(result.data.nextPageUrl);
-              page++;
-
-              if (page > 250) {
-                throw new Error("Shipment pagination safety limit reached.");
-              }
-            }
-          } catch (error) {
-            const spanMs = current.to.getTime() - current.from.getTime();
-            const minWindowMs = 60 * 60 * 1000;
-
-            if (spanMs > minWindowMs && current.depth < 12) {
-              shouldSplit = true;
-
-              const midpoint = new Date(
-                current.from.getTime() + Math.floor(spanMs / 2),
-              );
-
-              // Re-run the whole window after a pagination failure. Upserts make
-              // already-written rows safe to replay, while the smaller windows
-              // avoid repeatedly hitting the same failing large result set.
-              pendingWindows.push(
-                { from: midpoint, to: current.to, depth: current.depth + 1 },
-                { from: current.from, to: midpoint, depth: current.depth + 1 },
-              );
-            } else {
-              throw error;
-            }
-          }
-
-          if (!shouldSplit) continue;
-        }
-
-        windowFrom = windowTo;
-      }
+    const filterType = body?.filterType as FilterType | undefined;
+    if (!filterType || !states[filterType]) {
+      throw new Error("A valid shipment filterType is required.");
     }
 
-    const { error: finishError } = await supabaseAdmin
+    const now = new Date();
+    let modifiedFrom: Date;
+    let modifiedTo: Date;
+
+    if (body?.modifiedFrom && body?.modifiedTo) {
+      modifiedFrom = new Date(body.modifiedFrom);
+      modifiedTo = new Date(body.modifiedTo);
+    } else {
+      const { data: latestSuccess } = await supabaseAdmin
+        .from("sync_runs")
+        .select("finished_at")
+        .eq("user_id", userId)
+        .eq("sync_type", "shipments")
+        .eq("status", "success")
+        .not("finished_at", "is", null)
+        .order("finished_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const lookbackStart = latestSuccess?.finished_at
+        ? new Date(new Date(latestSuccess.finished_at).getTime() - 2 * 60 * 60 * 1000)
+        : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      modifiedFrom = new Date(
+        Math.max(
+          lookbackStart.getTime(),
+          now.getTime() - 7 * 24 * 60 * 60 * 1000,
+        ),
+      );
+      modifiedTo = now;
+    }
+
+    if (
+      !Number.isFinite(modifiedFrom.getTime()) ||
+      !Number.isFinite(modifiedTo.getTime()) ||
+      modifiedTo <= modifiedFrom
+    ) {
+      throw new Error("Invalid shipment sync date window.");
+    }
+
+    if (modifiedTo.getTime() - modifiedFrom.getTime() > 7 * 24 * 60 * 60 * 1000) {
+      throw new Error("Shipment sync window cannot exceed 7 days.");
+    }
+
+    runId = typeof body?.syncRunId === "string" ? body.syncRunId : null;
+
+    if (runId) {
+      const { data: existingRun, error: existingRunError } = await supabaseAdmin
+        .from("sync_runs")
+        .select("id,status,records_seen,records_written")
+        .eq("id", runId)
+        .eq("user_id", userId)
+        .eq("sync_type", "shipments")
+        .maybeSingle();
+
+      if (existingRunError) throw existingRunError;
+      if (!existingRun) throw new Error("Shipment sync run was not found.");
+      if (existingRun.status === "failed") {
+        throw new Error("Shipment sync run has already failed.");
+      }
+      totalSeen = existingRun.records_seen ?? 0;
+      totalWritten = existingRun.records_written ?? 0;
+    } else {
+      const { data: run, error: runError } = await supabaseAdmin
+        .from("sync_runs")
+        .insert({
+          user_id: userId,
+          sync_type: "shipments",
+          status: "running",
+          started_at: startedAt,
+          metadata: {
+            mode: "incremental",
+            filterType,
+            modifiedFrom: modifiedFrom.toISOString(),
+            modifiedTo: modifiedTo.toISOString(),
+          },
+        })
+        .select("id")
+        .single();
+
+      if (runError) throw runError;
+      runId = run.id;
+    }
+
+    const nextPageUrl =
+      typeof body?.nextPageUrl === "string" && body.nextPageUrl
+        ? normalizeFlipkartPath(body.nextPageUrl)
+        : null;
+
+    const pageSize = 5;
+    const filterBody = {
+      filter: {
+        type: filterType,
+        states: states[filterType],
+        modifiedDate: {
+          from: modifiedFrom.toISOString(),
+          to: modifiedTo.toISOString(),
+        },
+      },
+      pagination: { pageSize },
+      sort: { field: "modifiedDate", order: "desc" },
+    };
+
+    const isFirstPage = !nextPageUrl;
+    const requestPath = nextPageUrl ?? "/sellers/v3/shipments/filter";
+    const requestStarted = Date.now();
+
+    let result;
+    try {
+      result = await flipkartRequestWithRetry<ShipmentFilterResponse>(
+        requestPath,
+        isFirstPage
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(filterBody),
+            }
+          : {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await supabaseAdmin.from("api_requests").insert({
+        user_id: userId,
+        integration_id: null,
+        method: isFirstPage ? "POST" : "GET",
+        endpoint: requestPath,
+        status_code: null,
+        started_at: new Date(requestStarted).toISOString(),
+        finished_at: new Date().toISOString(),
+        duration_ms: Date.now() - requestStarted,
+        request_meta: {
+          filterType,
+          modifiedFrom: modifiedFrom.toISOString(),
+          modifiedTo: modifiedTo.toISOString(),
+          pageSize,
+        },
+        response_meta: {},
+        error_message: message,
+      });
+      throw error;
+    }
+
+    const shipments = result.data.shipments ?? [];
+    totalSeen += shipments.length;
+
+    const { error: apiLogError } = await supabaseAdmin
+      .from("api_requests")
+      .insert({
+        user_id: userId,
+        integration_id: null,
+        method: isFirstPage ? "POST" : "GET",
+        endpoint: requestPath,
+        status_code: result.status,
+        started_at: new Date(requestStarted).toISOString(),
+        finished_at: new Date().toISOString(),
+        duration_ms: Date.now() - requestStarted,
+        request_meta: {
+          filterType,
+          modifiedFrom: modifiedFrom.toISOString(),
+          modifiedTo: modifiedTo.toISOString(),
+          pageSize,
+        },
+        response_meta: {
+          shipmentCount: shipments.length,
+          hasMore: result.data.hasMore ?? false,
+          hasNextPageUrl: Boolean(result.data.nextPageUrl),
+        },
+      });
+
+    if (apiLogError) throw apiLogError;
+
+    for (const shipment of shipments) {
+      await upsertShipmentGraph(userId, runId, shipment);
+      totalWritten++;
+    }
+
+    const hasMore = Boolean(result.data.hasMore && result.data.nextPageUrl);
+    const continuationUrl = hasMore
+      ? normalizeFlipkartPath(result.data.nextPageUrl!)
+      : null;
+
+    const { error: progressError } = await supabaseAdmin
       .from("sync_runs")
       .update({
-        status: "success",
-        finished_at: new Date().toISOString(),
+        status: hasMore ? "running" : "success",
+        finished_at: hasMore ? null : new Date().toISOString(),
         records_seen: totalSeen,
         records_written: totalWritten,
+        error_message: null,
+        metadata: {
+          mode: "incremental",
+          filterType,
+          modifiedFrom: modifiedFrom.toISOString(),
+          modifiedTo: modifiedTo.toISOString(),
+          lastPageSize: shipments.length,
+          hasMore,
+        },
       })
-      .eq("id", run.id);
+      .eq("id", runId)
+      .eq("user_id", userId);
 
-    if (finishError) throw finishError;
+    if (progressError) throw progressError;
 
     return NextResponse.json({
       ok: true,
+      filterType,
       recordsSeen: totalSeen,
       recordsWritten: totalWritten,
+      hasMore,
+      nextPageUrl: continuationUrl,
+      syncRunId: runId,
+      modifiedFrom: modifiedFrom.toISOString(),
+      modifiedTo: modifiedTo.toISOString(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
@@ -593,7 +613,6 @@ export async function POST(request: Request) {
     }
 
     const status = message === "Unauthorized sync request." ? 401 : 500;
-
     return NextResponse.json({ ok: false, error: message }, { status });
   }
 }
