@@ -105,13 +105,13 @@ export default function DashboardClient(props: Props) {
         recordsWritten = Number(result.recordsWritten ?? result.listingsWritten ?? 0);
         cursor = {
           ...cursor,
-          nextUrl: result.nextUrl ?? cursor.nextUrl,
-          pageId: result.pageId ?? cursor.pageId,
-          pendingSkuIds: result.pendingSkuIds ?? cursor.pendingSkuIds,
-          batchNo: result.nextBatchNo ?? cursor.batchNo,
-          currentSource: result.currentSource ?? cursor.currentSource,
-          modifiedAfter: result.modifiedAfter ?? cursor.modifiedAfter,
-          modifiedBefore: result.modifiedBefore ?? cursor.modifiedBefore,
+          nextUrl: result.nextUrl !== undefined ? result.nextUrl : cursor.nextUrl,
+          pageId: result.pageId !== undefined ? result.pageId : cursor.pageId,
+          pendingSkuIds: result.pendingSkuIds !== undefined ? result.pendingSkuIds : cursor.pendingSkuIds,
+          batchNo: result.nextBatchNo !== undefined ? result.nextBatchNo : cursor.batchNo,
+          currentSource: result.currentSource !== undefined ? result.currentSource : cursor.currentSource,
+          modifiedAfter: result.modifiedAfter !== undefined ? result.modifiedAfter : cursor.modifiedAfter,
+          modifiedBefore: result.modifiedBefore !== undefined ? result.modifiedBefore : cursor.modifiedBefore,
         };
 
         setSyncProgress({
