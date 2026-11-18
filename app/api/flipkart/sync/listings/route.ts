@@ -172,7 +172,7 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
 
   const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
     user_id: userId,
-    sync_run_id: listingRunId,
+    sync_run_id: runId,
     source_type: "listing_details",
     external_id: sku,
     payload: listing,
