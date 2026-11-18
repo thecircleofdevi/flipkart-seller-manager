@@ -180,7 +180,7 @@ export default function DashboardClient(props: Props) {
         const pollPromise = (async () => {
           while (!cancelled) {
             const response = await fetch("/api/flipkart/sync/status?type=shipment_details", { cache: "no-store" });
-            const result: { error?: string; syncRunId?: string; hasMore?: boolean; nextBatchNo?: number; recordsWritten?: number } = await response.json().catch(() => ({}));
+            const result: { error?: string; syncRunId?: string; hasMore?: boolean; nextBatchNo?: number; recordsWritten?: number; running?: boolean; status?: string; errorMessage?: string; estimatedTotalSeconds?: number } = await response.json().catch(() => ({}));
             if (!response.ok || !result.running) {
               if (result.status === "failed") throw new Error(result.errorMessage ?? "Shipment details failed");
               return;
