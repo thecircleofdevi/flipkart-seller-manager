@@ -238,7 +238,7 @@ export async function POST(request: Request) {
 
       await supabaseAdmin.from("raw_flipkart_payloads").insert({
         user_id: userId,
-        sync_run_id: runId,
+        sync_run_id: listingRunId,
         source_type: "listing_search",
         external_id: pageId ?? "first",
         payload: searchResult.data,
@@ -256,7 +256,7 @@ export async function POST(request: Request) {
       });
 
       for (const [sku, listing] of Object.entries(detailResult.data.available ?? {})) {
-        await upsertListing(userId, runId, sku, listing);
+        await upsertListing(userId, listingRunId, sku, listing);
         written++;
       }
 
