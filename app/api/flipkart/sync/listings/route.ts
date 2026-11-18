@@ -172,7 +172,7 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
 
   const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
     user_id: userId,
-    sync_run_id: runId,
+    sync_run_id: listingRunId,
     source_type: "listing_details",
     external_id: sku,
     payload: listing,
@@ -211,9 +211,12 @@ export async function POST(request: Request) {
       runId = run.id;
     }
 
+    const listingRunId = runId;
+    if (!listingRunId) throw new Error("Listing sync run could not be initialized.");
+
     const { data: state } = await supabaseAdmin.from("sync_runs")
       .select("records_seen,records_written")
-      .eq("id", runId).single();
+      .eq("id", listingRunId).single();
 
     let seen = state?.records_seen ?? 0;
     let written = state?.records_written ?? 0;
@@ -282,12 +285,12 @@ export async function POST(request: Request) {
         lastBatchSize: batch.length,
         hasMore,
       },
-    }).eq("id", runId).eq("user_id", userId);
+    }).eq("id", listingRunId).eq("user_id", userId);
     if (progressError) throw progressError;
 
     return NextResponse.json({
       ok: true,
-      syncRunId: runId,
+      syncRunId: listingRunId,
       pageId: nextPageId,
       pendingSkuIds: remaining,
       hasMore,
