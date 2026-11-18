@@ -142,7 +142,7 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
 
   const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
     user_id: userId,
-    sync_run_id: runId,
+    sync_run_id: returnRunId,
     source_type: "return",
     external_id: returnId,
     payload: item,
@@ -208,9 +208,12 @@ export async function POST(request: Request) {
       runId = run.id;
     }
 
+    const returnRunId = runId;
+    if (!returnRunId) throw new Error("Return sync run could not be initialized.");
+
     const { data: runState } = await supabaseAdmin.from("sync_runs")
       .select("records_seen,records_written")
-      .eq("id", runId).single();
+      .eq("id", returnRunId).single();
 
     let totalSeen = runState?.records_seen ?? 0;
     let totalWritten = runState?.records_written ?? 0;
@@ -228,7 +231,7 @@ export async function POST(request: Request) {
     totalSeen += items.length;
 
     for (const item of items) {
-      if (await upsertReturn(userId, runId, item)) totalWritten++;
+      if (await upsertReturn(userId, returnRunId, item)) totalWritten++;
     }
 
     const returnedNext = result.data.nextUrl ?? result.data.next_url ?? null;
@@ -258,13 +261,13 @@ export async function POST(request: Request) {
         hasMore, lastPageSize: items.length,
         lastRequestDurationMs: Date.now() - requestStarted,
       },
-    }).eq("id", runId).eq("user_id", userId);
+    }).eq("id", returnRunId).eq("user_id", userId);
     if (progressError) throw progressError;
 
     return NextResponse.json({
       ok: true,
       mode,
-      syncRunId: runId,
+      syncRunId: returnRunId,
       currentSource: nextSource,
       nextUrl: continuationUrl,
       hasMore: !complete,
