@@ -66,6 +66,7 @@ type ShipmentFilterResponse = {
 };
 
 type FilterType = "preDispatch" | "postDispatch" | "cancelled";
+type ShipmentType = "NORMAL" | "SELF";
 
 const states: Record<FilterType, readonly string[]> = {
   preDispatch: [
@@ -375,6 +376,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
 
     const filterType = body?.filterType as FilterType | undefined;
+    const shipmentType = body?.shipmentType as ShipmentType | undefined;
     if (!filterType || !states[filterType]) {
       throw new Error("A valid shipment filterType is required.");
     }
@@ -471,7 +473,7 @@ export async function POST(request: Request) {
         ? normalizeFlipkartPath(body.nextPageUrl)
         : null;
 
-    const pageSize = 5;
+    const pageSize = 20;
     const filterBody = {
       filter: {
         type: filterType,
@@ -480,9 +482,10 @@ export async function POST(request: Request) {
           from: modifiedFrom.toISOString(),
           to: modifiedTo.toISOString(),
         },
+        ...(shipmentType ? { shipmentTypes: [shipmentType] } : {}),
       },
       pagination: { pageSize },
-      sort: { field: "modifiedDate", order: "desc" },
+      sort: { field: "orderDate", order: "desc" },
     };
 
     const isFirstPage = !nextPageUrl;
@@ -517,6 +520,7 @@ export async function POST(request: Request) {
         duration_ms: Date.now() - requestStarted,
         request_meta: {
           filterType,
+          shipmentType: shipmentType ?? null,
           modifiedFrom: modifiedFrom.toISOString(),
           modifiedTo: modifiedTo.toISOString(),
           pageSize,
@@ -543,6 +547,7 @@ export async function POST(request: Request) {
         duration_ms: Date.now() - requestStarted,
         request_meta: {
           filterType,
+          shipmentType: shipmentType ?? null,
           modifiedFrom: modifiedFrom.toISOString(),
           modifiedTo: modifiedTo.toISOString(),
           pageSize,
@@ -577,6 +582,7 @@ export async function POST(request: Request) {
         metadata: {
           mode: "incremental",
           filterType,
+          shipmentType: shipmentType ?? null,
           modifiedFrom: modifiedFrom.toISOString(),
           modifiedTo: modifiedTo.toISOString(),
           lastPageSize: shipments.length,
@@ -591,6 +597,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       filterType,
+      shipmentType: shipmentType ?? null,
       recordsSeen: totalSeen,
       recordsWritten: totalWritten,
       hasMore,
