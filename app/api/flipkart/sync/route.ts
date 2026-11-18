@@ -463,6 +463,8 @@ export async function POST(request: Request) {
       runId = run.id;
     }
 
+    if (!runId) throw new Error("Shipment sync run could not be initialized.");
+
     const nextPageUrl =
       typeof body?.nextPageUrl === "string" && body.nextPageUrl
         ? normalizeFlipkartPath(body.nextPageUrl)
