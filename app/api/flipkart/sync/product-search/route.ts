@@ -13,6 +13,7 @@ type ProductSearchItem = {
   status?: string;
   product_name?: string;
   product_image_url?: string;
+  product_url?: string;
   vertical?: string;
   product_description?: {
     ssp?: number;
