@@ -12,6 +12,15 @@ type ShipmentDetail = {
   billingAddress?: Record<string, unknown>;
   sellerAddress?: Record<string, unknown>;
   buyerDetails?: Record<string, unknown>;
+  forms?: unknown[];
+  subShipments?: Array<{
+    subShipmentId?: string;
+    packages?: unknown[];
+    courierDetails?: {
+      pickupDetails?: { vendorName?: string; trackingId?: string };
+      deliveryDetails?: { vendorName?: string; trackingId?: string };
+    };
+  }>;
   subShipments?: Array<{
     courierDetails?: {
       pickupDetails?: { vendorName?: string; trackingId?: string };
@@ -127,16 +136,17 @@ export async function POST(request: Request) {
           deliveryAddress: detail.deliveryAddress ?? null,
           billingAddress: detail.billingAddress ?? null,
           sellerAddress: detail.sellerAddress ?? null,
-          buyerDetails: detail.buyerDetails ?? null,
         };
 
         const { error } = await supabaseAdmin
           .from("shipments")
           .update({
-            location_id: undefined,
             tracking_id: trackingId,
             courier_name: courierName,
             address_data: addressData,
+            buyer_data: detail.buyerDetails ?? {},
+            forms_data: detail.forms ?? [],
+            packages_data: (detail.subShipments ?? []).flatMap((sub) => sub.packages ?? []),
             raw: detail,
           })
           .eq("id", local.id)
@@ -144,13 +154,14 @@ export async function POST(request: Request) {
 
         if (error) throw error;
 
-        await supabaseAdmin.from("raw_flipkart_payloads").insert({
+        const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
           user_id: userId,
           sync_run_id: run.id,
           source_type: "shipment_details",
           external_id: detail.shipmentId,
           payload: detail,
         });
+        if (rawError) throw rawError;
 
         updated++;
       }
