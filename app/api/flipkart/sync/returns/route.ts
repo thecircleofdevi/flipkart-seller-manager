@@ -44,30 +44,24 @@ function assertAuthorized(request: Request) {
   }
 }
 
-async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 4) {
+async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5) {
   let lastError: unknown;
-
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       return await flipkartRequest<T>(path, init);
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
-      if (!/Flipkart API (500|502|503|504)/.test(message) || attempt === attempts - 1) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** attempt));
+      if (!/Flipkart API (429|500|502|503|504)/.test(message) || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** attempt)));
     }
   }
-
   throw lastError;
 }
 
 function normalizePath(value: string) {
   const url = new URL(value, "https://api.flipkart.net");
-  if (url.hostname !== "api.flipkart.net") {
-    throw new Error("Invalid Flipkart pagination URL.");
-  }
+  if (url.hostname !== "api.flipkart.net") throw new Error("Invalid Flipkart pagination URL.");
   return url.pathname + url.search;
 }
 
@@ -99,76 +93,48 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
   const shipmentFlipkartId = firstString(item, ["shipmentId", "shipment_id"]);
   const locationFlipkartId = firstString(item, ["locationId", "location_id"]);
 
-  let orderItemId: string | null = null;
-  if (orderItemFlipkartId) {
-    const { data } = await supabaseAdmin
-      .from("order_items")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("flipkart_order_item_id", orderItemFlipkartId)
-      .maybeSingle();
-    orderItemId = data?.id ?? null;
-  }
-
-  let shipmentId: string | null = null;
-  if (shipmentFlipkartId) {
-    const { data } = await supabaseAdmin
-      .from("shipments")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("flipkart_shipment_id", shipmentFlipkartId)
-      .maybeSingle();
-    shipmentId = data?.id ?? null;
-  }
-
-  let locationId: string | null = null;
-  if (locationFlipkartId) {
-    const { data } = await supabaseAdmin
-      .from("locations")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("flipkart_location_id", locationFlipkartId)
-      .maybeSingle();
-    locationId = data?.id ?? null;
-  }
-
-  const { data: existing, error: existingError } = await supabaseAdmin
-    .from("returns")
-    .select("id,status")
-    .eq("user_id", userId)
-    .eq("flipkart_return_id", returnId)
-    .maybeSingle();
+  const [{ data: orderItem }, { data: shipment }, { data: location }, { data: existing, error: existingError }] =
+    await Promise.all([
+      orderItemFlipkartId
+        ? supabaseAdmin.from("order_items").select("id").eq("user_id", userId).eq("flipkart_order_item_id", orderItemFlipkartId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      shipmentFlipkartId
+        ? supabaseAdmin.from("shipments").select("id").eq("user_id", userId).eq("flipkart_shipment_id", shipmentFlipkartId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      locationFlipkartId
+        ? supabaseAdmin.from("locations").select("id").eq("user_id", userId).eq("flipkart_location_id", locationFlipkartId).maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabaseAdmin.from("returns").select("id,status").eq("user_id", userId).eq("flipkart_return_id", returnId).maybeSingle(),
+    ]);
 
   if (existingError) throw existingError;
 
-  const { data: saved, error } = await supabaseAdmin
-    .from("returns")
-    .upsert(
-      {
-        user_id: userId,
-        flipkart_return_id: returnId,
-        shipment_id: shipmentId,
-        order_item_id: orderItemId,
-        location_id: locationId,
-        source: firstString(item, ["source", "returnType", "return_type"]),
-        status: firstString(item, ["status", "returnStatus", "return_status"]),
-        return_reason: firstReason(item),
-        raw: item,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,flipkart_return_id" },
-    )
-    .select("id,status")
-    .single();
+  const nextStatus = firstString(item, ["status", "returnStatus", "return_status"]);
+  const createdAt = firstString(item, ["createdDate", "created_date"]);
+  const updatedAt = firstString(item, ["updatedDate", "updated_date"]);
+
+  const { data: saved, error } = await supabaseAdmin.from("returns").upsert({
+    user_id: userId,
+    flipkart_return_id: returnId,
+    shipment_id: shipment?.id ?? null,
+    order_item_id: orderItem?.id ?? null,
+    location_id: location?.id ?? null,
+    source: firstString(item, ["source", "returnType", "return_type"]),
+    status: nextStatus,
+    return_reason: firstReason(item),
+    raw: item,
+    ...(createdAt ? { created_at: createdAt } : {}),
+    ...(updatedAt ? { updated_at: updatedAt } : { updated_at: new Date().toISOString() }),
+  }, { onConflict: "user_id,flipkart_return_id" }).select("id,status").single();
 
   if (error) throw error;
 
-  if (existing?.status && existing.status !== saved.status) {
+  if (existing?.status !== nextStatus && nextStatus) {
     const { error: eventError } = await supabaseAdmin.from("return_events").insert({
       user_id: userId,
       return_id: saved.id,
-      event_type: saved.status ?? "STATUS_CHANGED",
-      event_timestamp: new Date().toISOString(),
+      event_type: nextStatus,
+      event_timestamp: updatedAt ?? createdAt ?? new Date().toISOString(),
       payload: item,
     });
     if (eventError) throw eventError;
@@ -181,86 +147,141 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
     external_id: returnId,
     payload: item,
   });
-
   if (rawError) throw rawError;
+
   return true;
 }
 
 export async function POST(request: Request) {
   let runId: string | null = null;
-
   try {
     assertAuthorized(request);
     const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
+    const body = await request.json().catch(() => ({}));
 
-    const { data: run, error: runError } = await supabaseAdmin
-      .from("sync_runs")
-      .insert({ user_id: userId, sync_type: "returns", status: "running" })
-      .select("id")
-      .single();
+    const mode = body?.mode === "full" ? "full" : "incremental";
+    const source = body?.source === "courier_return" ? "courier_return" : body?.source === "customer_return" ? "customer_return" : null;
+    const sources = source ? [source] : ["customer_return", "courier_return"];
 
-    if (runError) throw runError;
-    runId = run.id;
+    let nextUrl = typeof body?.nextUrl === "string" && body.nextUrl ? normalizePath(body.nextUrl) : null;
+    let currentSource = typeof body?.currentSource === "string" && sources.includes(body.currentSource) ? body.currentSource : sources[0];
 
-    let totalSeen = 0;
-    let totalWritten = 0;
-    let pages = 0;
+    let modifiedAfter: string | null = typeof body?.modifiedAfter === "string" ? body.modifiedAfter : null;
+    let modifiedBefore: string | null = typeof body?.modifiedBefore === "string" ? body.modifiedBefore : null;
 
-    for (const source of ["customer_return", "courier_return"]) {
-      let path = `/sellers/v2/returns?source=${encodeURIComponent(source)}`;
+    if (!modifiedAfter || !modifiedBefore) {
+      if (mode === "incremental") {
+        const { data: latestSuccess } = await supabaseAdmin.from("sync_runs")
+          .select("finished_at")
+          .eq("user_id", userId)
+          .eq("sync_type", "returns")
+          .eq("status", "success")
+          .not("finished_at", "is", null)
+          .order("finished_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      while (path) {
-        const result = await requestWithRetry<ReturnResponse>(path, { method: "GET" });
-        const items = result.data.returns ?? result.data.returnItems ?? [];
-        totalSeen += items.length;
-
-        for (const item of items) {
-          if (await upsertReturn(userId, run.id, item)) totalWritten++;
-        }
-
-        const next = result.data.nextUrl ?? result.data.next_url ?? null;
-        path = next ? normalizePath(next) : "";
-        pages++;
-
-        if (pages > 1000) throw new Error("Return pagination safety limit reached.");
+        const from = latestSuccess?.finished_at
+          ? new Date(new Date(latestSuccess.finished_at).getTime() - 2 * 60 * 60 * 1000)
+          : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        modifiedAfter = from.toISOString();
+        modifiedBefore = new Date().toISOString();
       }
     }
 
-    const { error: finishError } = await supabaseAdmin
-      .from("sync_runs")
-      .update({
-        status: "success",
-        finished_at: new Date().toISOString(),
-        records_seen: totalSeen,
-        records_written: totalWritten,
-      })
-      .eq("id", run.id);
+    if (typeof body?.syncRunId === "string") {
+      runId = body.syncRunId;
+      const { data: existingRun, error } = await supabaseAdmin.from("sync_runs")
+        .select("id,status,records_seen,records_written")
+        .eq("id", runId).eq("user_id", userId).eq("sync_type", "returns").maybeSingle();
+      if (error) throw error;
+      if (!existingRun) throw new Error("Return sync run was not found.");
+      if (existingRun.status === "failed") throw new Error("Return sync run has already failed.");
+    } else {
+      const { data: run, error } = await supabaseAdmin.from("sync_runs").insert({
+        user_id: userId,
+        sync_type: "returns",
+        status: "running",
+        metadata: { mode, sources, modifiedAfter, modifiedBefore, currentSource },
+      }).select("id").single();
+      if (error) throw error;
+      runId = run.id;
+    }
 
-    if (finishError) throw finishError;
+    const { data: runState } = await supabaseAdmin.from("sync_runs")
+      .select("records_seen,records_written")
+      .eq("id", runId).single();
+
+    let totalSeen = runState?.records_seen ?? 0;
+    let totalWritten = runState?.records_written ?? 0;
+
+    if (!nextUrl) {
+      const params = new URLSearchParams({ source: currentSource });
+      if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
+      if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
+      nextUrl = `/sellers/v2/returns?${params.toString()}`;
+    }
+
+    const requestStarted = Date.now();
+    const result = await requestWithRetry<ReturnResponse>(nextUrl, { method: "GET" });
+    const items = result.data.returns ?? result.data.returnItems ?? [];
+    totalSeen += items.length;
+
+    for (const item of items) {
+      if (await upsertReturn(userId, runId, item)) totalWritten++;
+    }
+
+    const returnedNext = result.data.nextUrl ?? result.data.next_url ?? null;
+    const hasMore = Boolean(returnedNext);
+
+    let nextSource = currentSource;
+    let continuationUrl = hasMore ? normalizePath(returnedNext!) : null;
+
+    if (!hasMore) {
+      const index = sources.indexOf(currentSource);
+      if (index < sources.length - 1) {
+        nextSource = sources[index + 1];
+        continuationUrl = null;
+      }
+    }
+
+    const complete = !hasMore && sources.indexOf(currentSource) === sources.length - 1;
+
+    const { error: progressError } = await supabaseAdmin.from("sync_runs").update({
+      status: complete ? "success" : "running",
+      finished_at: complete ? new Date().toISOString() : null,
+      records_seen: totalSeen,
+      records_written: totalWritten,
+      error_message: null,
+      metadata: {
+        mode, sources, currentSource: nextSource, modifiedAfter, modifiedBefore,
+        hasMore, lastPageSize: items.length,
+        lastRequestDurationMs: Date.now() - requestStarted,
+      },
+    }).eq("id", runId).eq("user_id", userId);
+    if (progressError) throw progressError;
 
     return NextResponse.json({
       ok: true,
-      returnsSeen: totalSeen,
-      returnsWritten: totalWritten,
-      pages,
+      mode,
+      syncRunId: runId,
+      currentSource: nextSource,
+      nextUrl: continuationUrl,
+      hasMore: !complete,
+      modifiedAfter,
+      modifiedBefore,
+      recordsSeen: totalSeen,
+      recordsWritten: totalWritten,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
-
     if (runId) {
-      await supabaseAdmin
-        .from("sync_runs")
-        .update({
-          status: "failed",
-          finished_at: new Date().toISOString(),
-          error_message: message,
-        })
-        .eq("id", runId);
+      await supabaseAdmin.from("sync_runs").update({
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        error_message: message,
+      }).eq("id", runId);
     }
-
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: message === "Unauthorized sync request." ? 401 : 500 },
-    );
+    return NextResponse.json({ ok: false, error: message }, { status: message === "Unauthorized sync request." ? 401 : 500 });
   }
 }
