@@ -211,9 +211,6 @@ export async function POST(request: Request) {
     const returnRunId = runId;
     if (!returnRunId) throw new Error("Return sync run could not be initialized.");
 
-    const returnRunId = runId;
-    if (!returnRunId) throw new Error("Return sync run could not be initialized.");
-
     const { data: runState } = await supabaseAdmin.from("sync_runs")
       .select("records_seen,records_written")
       .eq("id", returnRunId).single();
