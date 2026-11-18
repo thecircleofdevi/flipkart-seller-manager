@@ -138,7 +138,6 @@ export default function DashboardClient(props: Props) {
         let hasMore = true;
 
         while (hasMore) {
-          const pollPromise = poll("shipments");
           const response = await fetch("/api/flipkart/sync/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -153,7 +152,6 @@ export default function DashboardClient(props: Props) {
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
-          await pollPromise;
 
           syncRunId = result.syncRunId ?? syncRunId;
           nextPageUrl = result.nextPageUrl ?? null;
