@@ -49,6 +49,7 @@ export default function DashboardClient(props: Props) {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncStage, setSyncStage] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ status: string; elapsedSeconds: number; estimatedTotalSeconds: number; recordsWritten: number } | null>(null);
 
   const filteredShipments = useMemo(() => {
@@ -147,14 +148,8 @@ export default function DashboardClient(props: Props) {
 
   async function runSync(type: "shipments" | "listings") {
     setSyncMessage(null);
+    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
     setSyncStage(type);
-    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
-    setSyncing(type);
-  }
-
-  async function runSync(type: "shipments" | "listings") {
-    setSyncMessage(null);
-    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
     setSyncing(type);
   }
 
