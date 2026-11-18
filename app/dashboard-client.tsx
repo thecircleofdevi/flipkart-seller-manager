@@ -138,7 +138,7 @@ export default function DashboardClient(props: Props) {
         let hasMore = true;
 
         while (hasMore) {
-          const response = await fetch("/api/flipkart/sync/run", {
+          const response: Response = await fetch("/api/flipkart/sync/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -150,7 +150,7 @@ export default function DashboardClient(props: Props) {
               modifiedTo,
             }),
           });
-          const result = await response.json().catch(() => ({}));
+          const result: { ok?: boolean; error?: string; syncRunId?: string; nextPageUrl?: string | null; modifiedFrom?: string; modifiedTo?: string; hasMore?: boolean; recordsWritten?: number } = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
 
           syncRunId = result.syncRunId ?? syncRunId;
