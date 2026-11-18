@@ -180,7 +180,7 @@ export default function DashboardClient(props: Props) {
         const pollPromise = (async () => {
           while (!cancelled) {
             const response = await fetch("/api/flipkart/sync/status?type=shipment_details", { cache: "no-store" });
-            const result = await response.json().catch(() => ({}));
+            const result: { error?: string; syncRunId?: string; hasMore?: boolean; nextBatchNo?: number; recordsWritten?: number } = await response.json().catch(() => ({}));
             if (!response.ok || !result.running) {
               if (result.status === "failed") throw new Error(result.errorMessage ?? "Shipment details failed");
               return;
@@ -217,7 +217,7 @@ export default function DashboardClient(props: Props) {
         let syncRunId: string | null = null;
         let hasMore = true;
         while (hasMore && !cancelled) {
-          const response = await fetch("/api/flipkart/sync/run", {
+          const response: Response = await fetch("/api/flipkart/sync/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
