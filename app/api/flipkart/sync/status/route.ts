@@ -25,6 +25,32 @@ export async function GET(request: Request) {
 
   if (!latest) return NextResponse.json({ ok: true, running: false, status: "idle", estimatedTotalSeconds: 180 });
 
+  if (
+    latest.status === "running" &&
+    new Date(latest.started_at).getTime() < Date.now() - 10 * 60 * 1000
+  ) {
+    const staleMessage = "Sync run exceeded the execution window and was marked stale.";
+    await supabaseAdmin
+      .from("sync_runs")
+      .update({
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        error_message: staleMessage,
+      })
+      .eq("id", latest.id)
+      .eq("user_id", user.id);
+
+    return NextResponse.json({
+      ok: true,
+      running: false,
+      status: "failed",
+      elapsedSeconds: Math.floor((Date.now() - new Date(latest.started_at).getTime()) / 1000),
+      estimatedTotalSeconds: 180,
+      recordsWritten: latest.records_written ?? 0,
+      errorMessage: staleMessage,
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
+
   const { data: history } = await supabaseAdmin
     .from("sync_runs")
     .select("started_at,finished_at")
