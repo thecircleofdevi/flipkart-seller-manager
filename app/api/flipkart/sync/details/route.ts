@@ -21,12 +21,6 @@ type ShipmentDetail = {
       deliveryDetails?: { vendorName?: string; trackingId?: string };
     };
   }>;
-  subShipments?: Array<{
-    courierDetails?: {
-      pickupDetails?: { vendorName?: string; trackingId?: string };
-      deliveryDetails?: { vendorName?: string; trackingId?: string };
-    };
-  }>;
 };
 
 type ShipmentDetailResponse = ShipmentDetail | ShipmentDetail[];
