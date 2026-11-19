@@ -178,7 +178,8 @@ export async function POST(request: Request) {
     if (error instanceof SyncAlreadyRunningError) {
       return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
     }
-    const capabilityUnavailable = /^Flipkart API 404 on \/sellers\/listings\/v3\/product\/search:/.test(message);
+    const capabilityUnavailable =
+      message.includes("Flipkart API 404 on /sellers/listings/v3/product/search");
 
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
