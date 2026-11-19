@@ -432,6 +432,24 @@ export async function POST(request: Request) {
       throw new Error("Shipment sync window cannot exceed 7 days.");
     }
 
+    const checkpointDomain = `shipments:${filterType}:${shipmentType ?? "ALL"}`;
+    let checkpoint: { id: string; cursor: Record<string, unknown> } | null = null;
+
+    const { data: checkpointRow, error: checkpointError } = await supabaseAdmin
+      .from("sync_checkpoints")
+      .select("id,cursor")
+      .eq("user_id", userId)
+      .eq("domain", checkpointDomain)
+      .maybeSingle();
+
+    if (checkpointError) throw checkpointError;
+    if (checkpointRow) {
+      checkpoint = {
+        id: checkpointRow.id,
+        cursor: (checkpointRow.cursor ?? {}) as Record<string, unknown>,
+      };
+    }
+
     runId = typeof body?.syncRunId === "string" ? body.syncRunId : null;
 
     if (runId) {
@@ -476,10 +494,32 @@ export async function POST(request: Request) {
     if (!runId) throw new Error("Shipment sync run could not be initialized.");
     const shipmentRunId = runId;
 
-    const nextPageUrl =
+    const checkpointNextPageUrl =
+      typeof checkpoint?.cursor?.nextPageUrl === "string" && checkpoint.cursor.nextPageUrl
+        ? normalizeFlipkartPath(checkpoint.cursor.nextPageUrl)
+        : null;
+    const bodyNextPageUrl =
       typeof body?.nextPageUrl === "string" && body.nextPageUrl
         ? normalizeFlipkartPath(body.nextPageUrl)
         : null;
+    const nextPageUrl = bodyNextPageUrl ?? checkpointNextPageUrl;
+
+    if (!runId && checkpointNextPageUrl && checkpoint?.cursor?.syncRunId) {
+      const checkpointRunId = String(checkpoint.cursor.syncRunId);
+      const { data: checkpointRun } = await supabaseAdmin
+        .from("sync_runs")
+        .select("id,status,records_seen,records_written")
+        .eq("id", checkpointRunId)
+        .eq("user_id", userId)
+        .eq("sync_type", "shipments")
+        .maybeSingle();
+
+      if (checkpointRun && checkpointRun.status === "running") {
+        runId = checkpointRun.id;
+        totalSeen = checkpointRun.records_seen ?? 0;
+        totalWritten = checkpointRun.records_written ?? 0;
+      }
+    }
 
     const pageSize = 20;
     const filterBody = {
@@ -601,6 +641,31 @@ export async function POST(request: Request) {
       .eq("user_id", userId);
 
     if (progressError) throw progressError;
+
+    const { error: checkpointWriteError } = await supabaseAdmin
+      .from("sync_checkpoints")
+      .upsert(
+        {
+          user_id: userId,
+          domain: checkpointDomain,
+          cursor: hasMore
+            ? {
+                syncRunId: runId,
+                nextPageUrl: continuationUrl,
+                modifiedFrom: modifiedFrom.toISOString(),
+                modifiedTo: modifiedTo.toISOString(),
+              }
+            : {
+                lastSuccessAt: new Date().toISOString(),
+                modifiedFrom: modifiedFrom.toISOString(),
+                modifiedTo: modifiedTo.toISOString(),
+              },
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,domain" },
+      );
+
+    if (checkpointWriteError) throw checkpointWriteError;
 
     return NextResponse.json({
       ok: true,
