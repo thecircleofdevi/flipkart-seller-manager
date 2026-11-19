@@ -6,6 +6,7 @@ type NavKey = "overview" | "orders" | "shipments" | "listings" | "returns" | "sy
 
 type Props = {
   userEmail: string;
+  loginKey: string;
   metrics: { label: string; value: number; caption: string; icon: string }[];
   syncRows: { id: string; sync_type: string; status: string; started_at: string; finished_at: string | null; records_written: number | null; error_message: string | null }[];
   returns: { id: string; status: string | null; return_reason: string | null; created_at: string | null }[];
@@ -70,12 +71,12 @@ export default function DashboardClient(props: Props) {
   const visibleListings = filteredListings.slice((listingPage - 1) * pageSize, listingPage * pageSize);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (window.sessionStorage.getItem("seller-manager-auto-sync-started") === "1") return;
-    window.sessionStorage.setItem("seller-manager-auto-sync-started", "1");
+    if (window.sessionStorage.getItem("seller-manager-auto-sync-started:" + props.loginKey) === "1") return;
+    window.sessionStorage.setItem("seller-manager-auto-sync-started:" + props.loginKey, "1");
     setAutoSyncing(true);
     setSyncMessage("Starting automatic seller data sync...");
     setSyncing("shipments");
-  }, []);
+  }, [props.loginKey]);
 
   useEffect(() => {
     if (!syncing) return;
