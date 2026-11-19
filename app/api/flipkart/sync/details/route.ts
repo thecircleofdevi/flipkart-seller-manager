@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { SyncAlreadyRunningError, claimSyncRun } from "@/lib/sync-lock";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -92,13 +93,7 @@ export async function POST(request: Request) {
     assertAuthorized(request);
     const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
 
-    const { data: run, error: runError } = await supabaseAdmin
-      .from("sync_runs")
-      .insert({ user_id: userId, sync_type: "shipment_details", status: "running" })
-      .select("id")
-      .single();
-    if (runError) throw runError;
-    runId = run.id;
+    runId = await claimSyncRun(userId, "shipment_details", "shipment_details");
 
     const { data: rows, error: shipmentError } = await supabaseAdmin
       .from("shipments")
@@ -175,6 +170,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, shipmentsSeen: shipments.length, shipmentsUpdated: updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
+    }
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
         status: "failed",
