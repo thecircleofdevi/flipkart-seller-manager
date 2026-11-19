@@ -16,13 +16,20 @@ export async function POST(request: Request) {
     userId = await requireFlipkartOwner();
     const body = await request.json();
     const shipmentIds = parseStringList(body?.shipmentIds, "shipmentIds", 100);
-    const locationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
-    if (!locationId) throw new Error("locationId is required.");
+    const requestedLocationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
 
     const { data: owned, error } = await supabaseAdmin.from("shipments")
-      .select("flipkart_shipment_id").eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
+      .select("flipkart_shipment_id,location_id,locations:location_id(flipkart_location_id)")
+      .eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
+
+    const derivedLocations = [...new Set((owned ?? []).map((row) => {
+      const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
+      return location?.flipkart_location_id ?? null;
+    }).filter((value): value is string => Boolean(value))];
+    const locationId = requestedLocationId || (derivedLocations.length === 1 ? derivedLocations[0] : "");
+    if (!locationId) throw new Error("locationId is required when shipments span multiple or unknown dispatch locations.");
 
     const result = await flipkartRequest<{ shipments?: Result[] }>("/sellers/v3/shipments/dispatch", {
       method: "POST", headers: { "Content-Type": "application/json" },
