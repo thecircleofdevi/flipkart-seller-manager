@@ -76,7 +76,9 @@ export async function POST(request: Request) {
     for (const sku of succeeded) {
       const update = updates.find((item) => item.sku === sku)!;
       const listing = listingMap.get(sku)!;
-      const { data: location } = await supabaseAdmin.from("locations").select("id").eq("user_id", userId).eq("flipkart_location_id", update.locationId).maybeSingle();
+      const locationId = update.locationId;
+      if (!locationId) throw new Error(`No location resolved for ${sku}.`);
+      const { data: location } = await supabaseAdmin.from("locations").select("id").eq("user_id", userId).eq("flipkart_location_id", locationId).maybeSingle();
       if (!location) continue;
       await supabaseAdmin.from("listing_inventory").upsert({
         user_id: userId, listing_id: listing.id, location_id: location.id,
