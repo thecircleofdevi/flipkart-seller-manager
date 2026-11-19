@@ -40,6 +40,36 @@ function verifyNotification(request: Request) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function normalizeShipmentState(eventType: string, attributes: Record<string, unknown>): string | null {
+  const explicitStatus = attributes.status;
+  if (typeof explicitStatus === "string" && explicitStatus.trim()) return explicitStatus;
+
+  const map: Record<string, string> = {
+    shipment_created: "APPROVED",
+    "Shipment Created": "APPROVED",
+    shipment_packed: "PACKED",
+    packed: "PACKED",
+    Packed: "PACKED",
+    shipment_ready_to_dispatch: "READY_TO_DISPATCH",
+    ready_to_dispatch: "READY_TO_DISPATCH",
+    "Ready To Dispatch": "READY_TO_DISPATCH",
+    shipment_pickup_complete: "PICKUP_COMPLETE",
+    pickup_complete: "PICKUP_COMPLETE",
+    "Pickup Complete": "PICKUP_COMPLETE",
+    shipment_shipped: "SHIPPED",
+    shipped: "SHIPPED",
+    Shipped: "SHIPPED",
+    shipment_delivered: "DELIVERED",
+    delivered: "DELIVERED",
+    Delivered: "DELIVERED",
+    shipment_cancelled: "CANCELLED",
+    "shipment_cancelled": "CANCELLED",
+    "Shipment Cancelled": "CANCELLED",
+  };
+
+  return map[eventType] ?? null;
+}
+
 function findString(payload: Record<string, unknown>, keys: string[]): string | null {
   const queue: unknown[] = [payload];
   while (queue.length) {
@@ -81,6 +111,10 @@ export async function POST(request: Request) {
   const shipmentId = findString(payload, ["shipmentId", "shipment_id"]);
   const locationId = findString(payload, ["locationId", "location_id"]);
   const returnId = findString(payload, ["returnId", "return_id"]);
+  const attributes =
+    payload.attributes && typeof payload.attributes === "object"
+      ? (payload.attributes as Record<string, unknown>)
+      : {};
 
   const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
   const eventKey = createHash("sha256").update(body, "utf8").digest("hex");
@@ -133,16 +167,7 @@ export async function POST(request: Request) {
         });
         if (eventError) throw eventError;
 
-        const stateMap: Record<string, string> = {
-          "Shipment Created": "APPROVED",
-          "Packed": "PACKED",
-          "Ready To Dispatch": "READY_TO_DISPATCH",
-          "Pickup Complete": "PICKUP_COMPLETE",
-          "Shipped": "SHIPPED",
-          "Delivered": "DELIVERED",
-          "Shipment Cancelled": "CANCELLED",
-        };
-        const nextState = stateMap[eventType];
+        const nextState = normalizeShipmentState(eventType, attributes);
         if (nextState) {
           const { error: updateError } = await supabaseAdmin.from("shipments")
             .update({ state: nextState })
@@ -162,12 +187,18 @@ export async function POST(request: Request) {
 
       if (returnRow) {
         const returnStateMap: Record<string, string> = {
+          return_created: "CREATED",
           "Return Created": "CREATED",
+          return_completed: "COMPLETED",
           "Return Completed": "COMPLETED",
+          return_cancelled: "CANCELLED",
           "Return Cancelled": "CANCELLED",
+          return_picked_up: "PICKED_UP",
           "Return PickedUp": "PICKED_UP",
         };
-        const nextState = returnStateMap[eventType];
+        const nextState = returnStateMap[eventType] ?? (
+          typeof attributes.status === "string" ? attributes.status : null
+        );
         if (nextState) {
           const { error: updateError } = await supabaseAdmin.from("returns")
             .update({ status: nextState })
