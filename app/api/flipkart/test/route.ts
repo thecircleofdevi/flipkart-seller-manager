@@ -1,8 +1,25 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+async function assertAuthorized() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const ownerId = process.env.FLIPKART_OWNER_USER_ID;
+  if (!user || !ownerId || user.id !== ownerId) {
+    throw new Error("Unauthorized.");
+  }
+}
+
+
 export async function GET() {
+  try {
+    await assertAuthorized();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Unauthorized." }, { status: 401 });
+  }
+
   const appId = process.env.FLIPKART_APP_ID;
   const appSecret = process.env.FLIPKART_APP_SECRET;
 
