@@ -170,13 +170,13 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
     if (inventoryError) throw inventoryError;
   }
 
-  const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
+  const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").upsert({
     user_id: userId,
     sync_run_id: runId,
     source_type: "listing_details",
     external_id: sku,
     payload: listing,
-  });
+  }, { onConflict: "user_id,source_type,external_id,payload_hash" });
   if (rawError) throw rawError;
 }
 
@@ -236,13 +236,13 @@ export async function POST(request: Request) {
 
       nextPageId = searchResult.data.has_more ? searchResult.data.next_page_id ?? null : null;
 
-      await supabaseAdmin.from("raw_flipkart_payloads").insert({
+      await supabaseAdmin.from("raw_flipkart_payloads").upsert({
         user_id: userId,
         sync_run_id: listingRunId,
         source_type: "listing_search",
         external_id: pageId ?? "first",
         payload: searchResult.data,
-      });
+      }, { onConflict: "user_id,source_type,external_id,payload_hash" });
     }
 
     const batch = pending.slice(0, 10);
@@ -260,13 +260,13 @@ export async function POST(request: Request) {
         written++;
       }
 
-      await supabaseAdmin.from("raw_flipkart_payloads").insert({
+      await supabaseAdmin.from("raw_flipkart_payloads").upsert({
         user_id: userId,
         sync_run_id: runId,
         source_type: "listing_details_batch",
         external_id: batch.join(","),
         payload: detailResult.data,
-      });
+      }, { onConflict: "user_id,source_type,external_id,payload_hash" });
     }
 
     const hasMore = remaining.length > 0 || nextPageId !== null;
