@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     }
 
     for (const sku of succeeded) {
-      const update = updates.find((item) => item.sku === sku)!;
+      const update = updates.find((item: { sku: string; patch: Record<string, unknown> }) => item.sku === sku)!;
       const listing = listingMap.get(sku)!;
       const patch = update.patch;
       const fulfillment = patch.fulfillment && typeof patch.fulfillment === "object" ? patch.fulfillment as Record<string, unknown> : {};
