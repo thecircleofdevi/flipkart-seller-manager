@@ -13,16 +13,37 @@ export async function POST(request: Request) {
     userId = await requireFlipkartOwner();
     const body = await request.json();
     const shipmentIds = parseStringList(body?.shipmentIds, "shipmentIds", 100);
-    const locationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
+    const requestedLocationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
     const reason = typeof body?.reason === "string" ? body.reason.trim() : "";
-    const cancellationGroupIds = parseStringList(body?.cancellationGroupIds, "cancellationGroupIds", 100);
-    if (!locationId) throw new Error("locationId is required.");
     if (!REASONS.has(reason)) throw new Error("reason must be cannot_procure_item, not_enough_inventory, or b2b_order.");
 
     const { data: owned, error } = await supabaseAdmin.from("shipments")
-      .select("flipkart_shipment_id").eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
+      .select("id,flipkart_shipment_id,location_id,order_id,locations:location_id(flipkart_location_id)")
+      .eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
+
+    let cancellationGroupIds = parseStringList(body?.cancellationGroupIds ?? [], "cancellationGroupIds", 100);
+    if (!cancellationGroupIds.length) {
+      const shipmentDbIds = (owned ?? []).map((row) => row.id);
+      const { data: shipmentItems, error: shipmentItemError } = await supabaseAdmin
+        .from("shipment_items").select("order_item_id").in("shipment_id", shipmentDbIds);
+      if (shipmentItemError) throw shipmentItemError;
+      const orderItemIds = [...new Set((shipmentItems ?? []).map((row) => row.order_item_id).filter((value): value is string => Boolean(value)))];
+      if (!orderItemIds.length) throw new Error("No order items are linked to the shipment. Supply cancellationGroupIds explicitly.");
+      const { data: items, error: itemError } = await supabaseAdmin.from("order_items")
+        .select("cancellation_group_id").eq("user_id", userId).in("id", orderItemIds);
+      if (itemError) throw itemError;
+      cancellationGroupIds = [...new Set((items ?? []).map((row) => row.cancellation_group_id).filter((value): value is string => Boolean(value)))];
+      if (!cancellationGroupIds.length) throw new Error("No cancellation group IDs are available. Supply cancellationGroupIds explicitly.");
+    }
+
+    const derivedLocations = [...new Set((owned ?? []).map((row) => {
+      const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
+      return location?.flipkart_location_id ?? null;
+    }).filter((value): value is string => Boolean(value))];
+    const locationId = requestedLocationId || (derivedLocations.length === 1 ? derivedLocations[0] : "");
+    if (!locationId) throw new Error("locationId is required when shipments span multiple or unknown dispatch locations.");
 
     const result = await flipkartRequest<{ shipments?: Array<{ shipmentId?: string; processingStatus?: string; errorCode?: string; errorMessage?: string }> }>("/sellers/v3/shipments/cancel", {
       method: "POST", headers: { "Content-Type": "application/json" },
