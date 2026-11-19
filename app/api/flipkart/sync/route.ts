@@ -452,6 +452,28 @@ export async function POST(request: Request) {
 
     runId = typeof body?.syncRunId === "string" ? body.syncRunId : null;
 
+    const checkpointNextPageUrl =
+      typeof checkpoint?.cursor?.nextPageUrl === "string" && checkpoint.cursor.nextPageUrl
+        ? normalizeFlipkartPath(checkpoint.cursor.nextPageUrl)
+        : null;
+
+    if (!runId && checkpointNextPageUrl && checkpoint?.cursor?.syncRunId) {
+      const checkpointRunId = String(checkpoint.cursor.syncRunId);
+      const { data: checkpointRun } = await supabaseAdmin
+        .from("sync_runs")
+        .select("id,status,records_seen,records_written")
+        .eq("id", checkpointRunId)
+        .eq("user_id", userId)
+        .eq("sync_type", "shipments")
+        .maybeSingle();
+
+      if (checkpointRun && checkpointRun.status === "running") {
+        runId = checkpointRun.id;
+        totalSeen = checkpointRun.records_seen ?? 0;
+        totalWritten = checkpointRun.records_written ?? 0;
+      }
+    }
+
     if (runId) {
       const { data: existingRun, error: existingRunError } = await supabaseAdmin
         .from("sync_runs")
@@ -466,8 +488,8 @@ export async function POST(request: Request) {
       if (existingRun.status === "failed") {
         throw new Error("Shipment sync run has already failed.");
       }
-      totalSeen = existingRun.records_seen ?? 0;
-      totalWritten = existingRun.records_written ?? 0;
+      totalSeen = existingRun.records_seen ?? totalSeen;
+      totalWritten = existingRun.records_written ?? totalWritten;
     } else {
       const { data: run, error: runError } = await supabaseAdmin
         .from("sync_runs")
@@ -494,10 +516,6 @@ export async function POST(request: Request) {
     if (!runId) throw new Error("Shipment sync run could not be initialized.");
     const shipmentRunId = runId;
 
-    const checkpointNextPageUrl =
-      typeof checkpoint?.cursor?.nextPageUrl === "string" && checkpoint.cursor.nextPageUrl
-        ? normalizeFlipkartPath(checkpoint.cursor.nextPageUrl)
-        : null;
     const bodyNextPageUrl =
       typeof body?.nextPageUrl === "string" && body.nextPageUrl
         ? normalizeFlipkartPath(body.nextPageUrl)
