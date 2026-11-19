@@ -107,7 +107,12 @@ export async function POST(request: Request) {
     event_key: eventKey,
   }).select("id").single();
 
-  if (error) return NextResponse.json({ ok: false, error: "Notification storage failed." }, { status: 500 });
+  if (error) {
+    if (error.code === "23505") {
+      return NextResponse.json({ ok: true, duplicate: true });
+    }
+    return NextResponse.json({ ok: false, error: "Notification storage failed." }, { status: 500 });
+  }
 
   try {
     if (shipmentId) {
