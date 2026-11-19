@@ -23,24 +23,29 @@ export async function POST(request: Request) {
     action = required(body?.action, "action");
     if (action !== "attempt" && action !== "complete") throw new Error("action must be attempt or complete.");
 
-    const serviceFulfilmentIds = parseStringList(body?.serviceFulfilmentIds, "serviceFulfilmentIds", 100);
-    const deliveryDate = required(body?.deliveryDate, "deliveryDate");
-    if (!datePattern.test(deliveryDate)) throw new Error("deliveryDate must use yyyy-MM-dd format.");
+    const servicesInput = Array.isArray(body?.services) ? body.services : [];
+    if (servicesInput.length < 1 || servicesInput.length > 100) {
+      throw new Error("services must contain between 1 and 100 service records.");
+    }
 
-    const services = serviceFulfilmentIds.map((service: string) => {
-      const row: Record<string, unknown> = {
-        deliveryDate,
-        service,
-      };
+    const services = servicesInput.map((item: unknown, index: number) => {
+      if (!item || typeof item !== "object") throw new Error(`services[${index}] must be an object.`);
+      const row = item as Record<string, unknown>;
+      const shipmentId = required(row.shipmentId, `services[${index}].shipmentId`);
+      const locationId = required(row.locationId, `services[${index}].locationId`);
+      const deliveryDate = required(row.deliveryDate ?? body?.deliveryDate, `services[${index}].deliveryDate`);
+      if (!datePattern.test(deliveryDate)) throw new Error(`services[${index}].deliveryDate must use yyyy-MM-dd format.`);
+
+      const service: Record<string, unknown> = { shipmentId, locationId, deliveryDate };
       if (action === "attempt") {
-        const newDeliveryDate = required(body?.newDeliveryDate, "newDeliveryDate");
+        const newDeliveryDate = required(row.newDeliveryDate ?? body?.newDeliveryDate, "newDeliveryDate");
         if (!datePattern.test(newDeliveryDate)) throw new Error("newDeliveryDate must use yyyy-MM-dd format.");
-        row.newDeliveryDate = newDeliveryDate;
-        row.reason = required(body?.reason, "reason");
-        row.subReason = required(body?.subReason, "subReason");
-        if (body?.comments) row.comments = String(body.comments);
+        service.newDeliveryDate = newDeliveryDate;
+        service.reason = required(row.reason ?? body?.reason, "reason");
+        service.subReason = required(row.subReason ?? body?.subReason, "subReason");
+        if (row.comments ?? body?.comments) service.comments = String(row.comments ?? body.comments);
       }
-      return row;
+      return service;
     });
 
     const endpoint = action === "attempt" ? "/sellers/v2/services/attempt" : "/sellers/v2/services/complete";
@@ -54,7 +59,7 @@ export async function POST(request: Request) {
       userId,
       method: "POST",
       endpoint,
-      requestMeta: { action, serviceFulfilmentIds },
+      requestMeta: { action, serviceCount: services.length },
       responseMeta: result.data && typeof result.data === "object" ? result.data as Record<string, unknown> : {},
       statusCode: result.status,
       startedAt,
