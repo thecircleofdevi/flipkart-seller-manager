@@ -40,10 +40,10 @@ export async function POST(request: Request) {
       if (!cancellationGroupIds.length) throw new Error("No cancellation group IDs are available. Supply cancellationGroupIds explicitly.");
     }
 
-    const derivedLocations = [...new Set((owned ?? []).map((row) => {
+    const derivedLocations = Array.from(new Set((owned ?? []).map((row) => {
       const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
       return location?.flipkart_location_id ?? null;
-    }).filter((value): value is string => Boolean(value))];
+    }).filter(Boolean))) as string[];
     const locationId = requestedLocationId || (derivedLocations.length === 1 ? derivedLocations[0] : "");
     if (!locationId) throw new Error("locationId is required when shipments span multiple or unknown dispatch locations.");
 
