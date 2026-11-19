@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type OtcData = Record<string, unknown> | null;
 
@@ -24,6 +24,7 @@ export default function ReturnOtcPanel() {
   const [shipments, setShipments] = useState<OtcData>(null);
   const [end, setEnd] = useState<OtcData>(null);
   const [selectedFeId, setSelectedFeId] = useState("");
+  const [autoPoll, setAutoPoll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -109,6 +110,47 @@ export default function ReturnOtcPanel() {
     if (data) setShipments(data);
   }
 
+  useEffect(() => {
+    if (!autoPoll || !activeTaskId || !activeFeId) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const response = await fetch("/api/flipkart/returns/otc", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "shipments", taskId: activeTaskId, feId: activeFeId, pageSize: 25 }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!cancelled && response.ok && result.ok && result.data) {
+          const next = asRecord(result.data);
+          if (next) {
+            setShipments((current) => {
+              const existing = Array.isArray(current?.scannedShipments) ? current.scannedShipments : [];
+              const incoming = Array.isArray(next.scannedShipments) ? next.scannedShipments : [];
+              const byId = new Map<string, unknown>();
+              for (const item of [...existing, ...incoming]) {
+                const row = asRecord(item);
+                const id = stringValue(row?.shipmentId) || stringValue(row?.trackingId) || JSON.stringify(item);
+                byId.set(id, item);
+              }
+              return { ...current, ...next, scannedShipments: [...byId.values()] };
+            });
+          }
+        }
+      } catch {
+        // Background polling is best-effort. The visible manual controls remain available.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [autoPoll, activeTaskId, activeFeId]);
+
   async function loadNextPage() {
     const nextUrl = stringValue(shipments?.nextUrl);
     if (!nextUrl) return;
@@ -181,6 +223,7 @@ export default function ReturnOtcPanel() {
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         <button className="text-button" disabled={Boolean(busy) || !activeTaskId || !activeFeId} onClick={loadShipments}>{busy === "shipments" ? "Loading..." : "3. Load scanned shipments"}</button>
+        <label className="badge" style={{ cursor: "pointer" }}><input type="checkbox" checked={autoPoll} onChange={(e) => setAutoPoll(e.target.checked)} disabled={!activeTaskId || !activeFeId} /> Auto-poll every 30s</label>
         <button className="text-button" disabled={Boolean(busy) || !shipments?.nextUrl} onClick={loadNextPage}>{busy === "next" ? "Loading..." : "Load next page"}</button>
         <button className="text-button" disabled={Boolean(busy) || !activeTaskId || !activeFeId} onClick={endOtc}>{busy === "end" ? "Ending..." : "4. End OTC"}</button>
       </div>
