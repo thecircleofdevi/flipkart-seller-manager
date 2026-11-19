@@ -24,10 +24,10 @@ export async function POST(request: Request) {
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
 
-    const derivedLocations = [...new Set((owned ?? []).map((row) => {
+    const derivedLocations = Array.from(new Set((owned ?? []).map((row) => {
       const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
       return location?.flipkart_location_id ?? null;
-    }).filter((value): value is string => Boolean(value))];
+    }).filter(Boolean))) as string[];
     const locationId = requestedLocationId || (derivedLocations.length === 1 ? derivedLocations[0] : "");
     if (!locationId) throw new Error("locationId is required when shipments span multiple or unknown dispatch locations.");
 
