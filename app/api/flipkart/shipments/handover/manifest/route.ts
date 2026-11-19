@@ -70,23 +70,19 @@ export async function POST(request: Request) {
     const selected = usable.find((x) => x.vendorGroupCode === requestedVendor);
     if (!selected) throw new Error("vendorGroupCode is not a current dispatchable vendor for this location.");
 
-    const params = [{
+    const params = {
       vendorGroupCode: selected.vendorGroupCode,
       locationId,
       isMps: Boolean(selected.isMps),
-      ...(selected.isMps ? { pickUpDate: { after: selected.pickUpDate?.after, before: selected.pickUpDate?.before } } : {}),
-    }];
+      ...(selected.isMps
+        ? { pickupDate: { after: selected.pickUpDate?.after, before: selected.pickUpDate?.before } }
+        : {}),
+    };
 
     const result = await flipkartBinaryRequest("/sellers/v3/shipments/manifest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        params,
-        vendorGroupCode: selected.vendorGroupCode,
-        locationId,
-        isMps: Boolean(selected.isMps),
-        ...(selected.isMps ? { pickUpDate: { after: selected.pickUpDate?.after, before: selected.pickUpDate?.before } } : {}),
-      }),
+      body: JSON.stringify({ params }),
     });
 
     await logFlipkartMutation({
