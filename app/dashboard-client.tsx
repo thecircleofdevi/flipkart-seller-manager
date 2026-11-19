@@ -334,10 +334,27 @@ export default function DashboardClient(props: Props) {
   async function selfShipDispatch(shipmentId: string) {
     const locationId = window.prompt("Flipkart location ID", "");
     if (locationId === null) return;
-    const deliveryPartnerCode = window.prompt("Delivery partner code", "");
-    if (deliveryPartnerCode === null) return;
-    const deliveryPartner = window.prompt("Delivery partner name (optional)", "");
-    if (deliveryPartner === null) return;
+    const vendorResponse = await fetch(`/api/flipkart/shipments/self-ship/vendors?locationId=${encodeURIComponent(locationId)}`, { cache: "no-store" });
+    const vendorResult = await vendorResponse.json().catch(() => ({}));
+    if (!vendorResponse.ok || vendorResult.ok === false) {
+      setSyncMessage(vendorResult.error ?? "Could not load allowed self-ship vendors.");
+      return;
+    }
+    const vendors = Array.isArray(vendorResult.data) ? vendorResult.data : Array.isArray(vendorResult.data?.vendors) ? vendorResult.data.vendors : [];
+    if (!vendors.length) {
+      setSyncMessage("Flipkart returned no allowed self-ship vendors for this location.");
+      return;
+    }
+    const options = vendors.map((v: { vendor_name?: string; display_name?: string; vendor_code?: string }) => `${v.vendor_code ?? ""} | ${v.display_name ?? v.vendor_name ?? "Vendor"}`).filter(Boolean).join("\n");
+    const selectedCode = window.prompt(`Select an allowed delivery partner by entering its vendor code:\n\n${options}`, vendors[0]?.vendor_code ?? "");
+    if (selectedCode === null) return;
+    const selected = vendors.find((v: { vendor_code?: string }) => v.vendor_code === selectedCode.trim());
+    if (!selected?.vendor_code) {
+      setSyncMessage("That delivery partner code is not in Flipkart's allowed vendor list.");
+      return;
+    }
+    const deliveryPartnerCode = selected.vendor_code;
+    const deliveryPartner = selected.display_name ?? selected.vendor_name ?? "";
     const dispatchDate = window.prompt("Dispatch date (ISO datetime)", new Date().toISOString());
     if (dispatchDate === null) return;
     const tentativeDeliveryDate = window.prompt("Tentative delivery date (ISO datetime)", new Date(Date.now() + 3 * 86400000).toISOString());
