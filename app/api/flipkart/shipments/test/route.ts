@@ -1,7 +1,18 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 
 export const runtime = "nodejs";
+
+async function assertAuthorized() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  const ownerId = process.env.FLIPKART_OWNER_USER_ID;
+  if (!user || !ownerId || user.id !== ownerId) {
+    throw new Error("Unauthorized.");
+  }
+}
+
 
 type ShipmentSearchResponse = {
   shipments?: unknown[];
@@ -11,6 +22,7 @@ type ShipmentSearchResponse = {
 
 export async function GET() {
   try {
+    await assertAuthorized();
     const { data, status } = await flipkartRequest<ShipmentSearchResponse>(
       "/sellers/v3/shipments/filter/",
       {
@@ -47,7 +59,7 @@ export async function GET() {
         ok: false,
         error: error instanceof Error ? error.message : "Unknown Flipkart API error.",
       },
-      { status: 502 }
+      { status: error instanceof Error && error.message === "Unauthorized." ? 401 : 502 }
     );
   }
 }
