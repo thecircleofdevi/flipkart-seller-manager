@@ -24,3 +24,32 @@ export async function flipkartRequest<T>(path: string, init: RequestInit = {}): 
 
   return { data, status: response.status };
 }
+
+export async function flipkartBinaryRequest(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ data: ArrayBuffer; status: number; contentType: string | null; contentDisposition: string | null }> {
+  const token = await getFlipkartAccessToken();
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/pdf, application/octet-stream, application/json",
+      Authorization: `Bearer ${token}`,
+      ...(init.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Flipkart API ${response.status} on ${path}: ${text.slice(0, 1000)}`);
+  }
+
+  return {
+    data: await response.arrayBuffer(),
+    status: response.status,
+    contentType: response.headers.get("content-type"),
+    contentDisposition: response.headers.get("content-disposition"),
+  };
+}
