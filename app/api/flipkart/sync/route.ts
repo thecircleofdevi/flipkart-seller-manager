@@ -351,13 +351,16 @@ async function upsertShipmentGraph(
   if (shipment.shipmentId) {
     const { error: rawError } = await supabaseAdmin
       .from("raw_flipkart_payloads")
-      .insert({
-        user_id: userId,
-        sync_run_id: syncRunId,
-        source_type: "shipment_filter",
-        external_id: shipment.shipmentId,
-        payload: shipment,
-      });
+      .upsert(
+        {
+          user_id: userId,
+          sync_run_id: syncRunId,
+          source_type: "shipment_filter",
+          external_id: shipment.shipmentId,
+          payload: shipment,
+        },
+        { onConflict: "user_id,source_type,external_id,payload_hash" },
+      );
 
     if (rawError) throw rawError;
   }
