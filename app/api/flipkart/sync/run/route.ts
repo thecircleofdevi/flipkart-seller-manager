@@ -19,6 +19,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  const ownerId = process.env.FLIPKART_OWNER_USER_ID;
+  if (!ownerId || user.id !== ownerId) {
+    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
   const body = await request.json().catch(() => ({}));
   const type = body?.type;
 
