@@ -143,13 +143,17 @@ export async function POST(request: Request) {
       written++;
     }
 
-    await supabaseAdmin.from("raw_flipkart_payloads").insert({
-      user_id: userId,
-      sync_run_id: runId,
-      source_type: "product_search",
-      external_id: `${internalState}:${batchNo}`,
-      payload: result.data,
-    });
+    const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").upsert(
+      {
+        user_id: userId,
+        sync_run_id: runId,
+        source_type: "product_search",
+        external_id: `${internalState}:${batchNo}`,
+        payload: result.data,
+      },
+      { onConflict: "user_id,source_type,external_id,payload_hash" },
+    );
+    if (rawError) throw rawError;
 
     const total = result.data.totalListingsCount ?? 0;
     const hasMore = (batchNo + 1) * 20 < total && items.length > 0;
