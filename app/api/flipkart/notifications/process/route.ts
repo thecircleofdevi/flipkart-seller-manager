@@ -100,6 +100,10 @@ export async function POST(request: Request) {
               normalizeShipmentState(notification.event_type, attributes) ??
               stringValue(payload.status);
 
+            if (!nextState) {
+              throw new Error(`Unmapped shipment notification event: ${notification.event_type}`);
+            }
+
             const { error: shipmentError } = await supabaseAdmin
               .from("shipments")
               .update({
@@ -110,9 +114,6 @@ export async function POST(request: Request) {
               .eq("user_id", userId);
 
             if (shipmentError) throw shipmentError;
-            if (!nextState) {
-              throw new Error(`Unmapped shipment notification event: ${notification.event_type}`);
-            }
 
             const eventId =
               stringValue(payload.eventId) ??
