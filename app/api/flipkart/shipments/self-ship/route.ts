@@ -12,6 +12,8 @@ const ACTIONS = {
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+
 function required(value: unknown, field: string) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required.`);
   return value.trim();
@@ -27,6 +29,8 @@ export async function POST(request: Request) {
     if (!(action in ACTIONS)) throw new Error("Unsupported self-ship action.");
 
     const shipmentIds = parseStringList(body?.shipmentIds, "shipmentIds", 100);
+    if (!datePattern.test(String(body?.deliveryDate ?? ""))) throw new Error("deliveryDate must use yyyy-MM-dd format.");
+    if (action === "deliveryAttempt" && !datePattern.test(String(body?.newDeliveryDate ?? ""))) throw new Error("newDeliveryDate must use yyyy-MM-dd format.");
     const { data: shipments, error } = await supabaseAdmin
       .from("shipments")
       .select("id,flipkart_shipment_id,location_id,shipment_type")
