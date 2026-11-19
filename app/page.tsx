@@ -45,6 +45,7 @@ export default async function Home() {
   return (
     <DashboardClient
       userEmail={user.email ?? "Seller account"}
+      loginKey={user.last_sign_in_at ?? user.id}
       metrics={metricTables.map((m, i) => ({ label: m.label, icon: m.icon, caption: m.caption, value: metricResults[i].count }))}
       syncRows={(recentSyncs.data ?? []).map((r) => ({ id: r.id, sync_type: r.sync_type, status: r.status, started_at: r.started_at, finished_at: r.finished_at, records_written: r.records_written, error_message: r.error_message }))}
       returns={(openReturns.data ?? []).map((r) => ({ id: r.id, status: r.status, return_reason: r.return_reason, created_at: r.created_at }))}
