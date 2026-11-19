@@ -41,7 +41,7 @@ export default function ReturnOtcPanel() {
   const activeFeId = selectedFeId || startDetails[0]?.feId || feDetails[0]?.feId || "";
   const activeTaskId = stringValue(startDetails.find((x) => x.feId === activeFeId)?.detail?.taskId)
     || stringValue(feDetails.find((x) => x.feId === activeFeId)?.detail?.task?.id);
-  const startOtc = stringValue(startDetails.find((x) => x.feId === activeFeId)?.detail?.otc);
+  const startOtcCode = stringValue(startDetails.find((x) => x.feId === activeFeId)?.detail?.otc);
 
   const shipmentCount = useMemo(() => {
     const value = shipments?.scannedShipments;
@@ -219,7 +219,7 @@ export default function ReturnOtcPanel() {
         </div>
       )}
 
-      {startOtc && <div className="badge good" style={{ marginTop: 10 }}>Start OTC: {startOtc}</div>}
+      {startOtcCode && <div className="badge good" style={{ marginTop: 10 }}>Start OTC: {startOtcCode}</div>}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         <button className="text-button" disabled={Boolean(busy) || !activeTaskId || !activeFeId} onClick={loadShipments}>{busy === "shipments" ? "Loading..." : "3. Load scanned shipments"}</button>
