@@ -135,6 +135,8 @@ export default function DashboardClient(props: Props) {
       }
     };
 
+    let productEnrichmentUnavailable = false;
+
     const runStage = async (stage: typeof stages[number]) => {
       setSyncStage(stage.type);
       setSyncProgress({ status: "running", elapsedSeconds: 0, estimatedTotalSeconds: 180, recordsWritten: 0 });
@@ -262,7 +264,6 @@ export default function DashboardClient(props: Props) {
     };
 
     (async () => {
-      let productEnrichmentUnavailable = false;
       try {
         for (const stage of stages) {
           if (cancelled) return;
