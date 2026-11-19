@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { SyncAlreadyRunningError, claimSyncRun } from "@/lib/sync-lock";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -198,14 +199,7 @@ export async function POST(request: Request) {
       if (!existingRun) throw new Error("Return sync run was not found.");
       if (existingRun.status === "failed") throw new Error("Return sync run has already failed.");
     } else {
-      const { data: run, error } = await supabaseAdmin.from("sync_runs").insert({
-        user_id: userId,
-        sync_type: "returns",
-        status: "running",
-        metadata: { mode, sources, modifiedAfter, modifiedBefore, currentSource },
-      }).select("id").single();
-      if (error) throw error;
-      runId = run.id;
+      runId = await claimSyncRun(userId, "returns", "returns:" + mode + ":" + sources.join(","), { mode, sources, modifiedAfter, modifiedBefore, currentSource });
     }
 
     const returnRunId = runId;
@@ -278,6 +272,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
+    }
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
         status: "failed",
