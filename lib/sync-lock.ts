@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-const STALE_AFTER_MS = 30 * 60 * 1000;
+const STALE_AFTER_MS = 10 * 60 * 1000;
 
 export class SyncAlreadyRunningError extends Error {
   constructor(public readonly syncRunId: string) {
