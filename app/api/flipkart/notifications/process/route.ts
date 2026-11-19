@@ -20,6 +20,42 @@ function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function normalizeShipmentState(eventType: string, attributes: Record<string, unknown>) {
+  const explicitStatus = stringValue(attributes.status);
+  if (explicitStatus) return explicitStatus;
+
+  const map: Record<string, string> = {
+    shipment_created: "APPROVED",
+    shipment_packed: "PACKED",
+    packed: "PACKED",
+    shipment_ready_to_dispatch: "READY_TO_DISPATCH",
+    ready_to_dispatch: "READY_TO_DISPATCH",
+    shipment_pickup_complete: "PICKUP_COMPLETE",
+    pickup_complete: "PICKUP_COMPLETE",
+    shipment_shipped: "SHIPPED",
+    shipped: "SHIPPED",
+    shipment_delivered: "DELIVERED",
+    delivered: "DELIVERED",
+    shipment_cancelled: "CANCELLED",
+  };
+
+  return map[eventType] ?? null;
+}
+
+function normalizeReturnStatus(eventType: string, attributes: Record<string, unknown>) {
+  const explicitStatus = stringValue(attributes.status);
+  if (explicitStatus) return explicitStatus;
+
+  const map: Record<string, string> = {
+    return_created: "CREATED",
+    return_completed: "COMPLETED",
+    return_cancelled: "CANCELLED",
+    return_picked_up: "PICKED_UP",
+  };
+
+  return map[eventType] ?? null;
+}
+
 export async function POST(request: Request) {
   try {
     assertAuthorized(request);
@@ -61,9 +97,8 @@ export async function POST(request: Request) {
 
           if (shipment) {
             const nextState =
-              stringValue(attributes.status) ??
-              stringValue(payload.status) ??
-              notification.event_type;
+              normalizeShipmentState(notification.event_type, attributes) ??
+              stringValue(payload.status);
 
             const { error: shipmentError } = await supabaseAdmin
               .from("shipments")
@@ -75,6 +110,9 @@ export async function POST(request: Request) {
               .eq("user_id", userId);
 
             if (shipmentError) throw shipmentError;
+            if (!nextState) {
+              throw new Error(`Unmapped shipment notification event: ${notification.event_type}`);
+            }
 
             const eventId =
               stringValue(payload.eventId) ??
@@ -117,9 +155,8 @@ export async function POST(request: Request) {
 
           if (returnRow) {
             const nextStatus =
-              stringValue(attributes.status) ??
-              stringValue(payload.status) ??
-              notification.event_type;
+              normalizeReturnStatus(notification.event_type, attributes) ??
+              stringValue(payload.status);
 
             const { error: returnError } = await supabaseAdmin
               .from("returns")
@@ -132,6 +169,9 @@ export async function POST(request: Request) {
               .eq("user_id", userId);
 
             if (returnError) throw returnError;
+            if (!nextStatus) {
+              throw new Error(`Unmapped return notification event: ${notification.event_type}`);
+            }
 
             if (returnRow.status !== nextStatus) {
               const { error: eventError } = await supabaseAdmin
