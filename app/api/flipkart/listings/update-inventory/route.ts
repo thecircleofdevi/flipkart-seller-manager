@@ -42,10 +42,10 @@ export async function POST(request: Request) {
           .eq("user_id", userId)
           .eq("listing_id", listingMap.get(update.sku)!.id);
         if (locationError) throw locationError;
-        const ids = [...new Set((locations ?? []).map((row) => {
+        const ids = Array.from(new Set((locations ?? []).map((row) => {
           const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
           return location?.flipkart_location_id ?? null;
-        }).filter((value): value is string => Boolean(value)))];
+        }).filter(Boolean))) as string[];
         if (ids.length !== 1) throw new Error(`Listing ${update.sku} has multiple or unknown locations. Supply locationId explicitly.`);
         update.locationId = ids[0];
       }
