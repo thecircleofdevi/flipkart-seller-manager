@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       throw new Error("updates must contain 1 to 10 items.");
     }
 
-    const updates = body.updates.map((item: unknown, index: number) => {
+    const updates: Array<{ sku: string; patch: Record<string, unknown> }> = body.updates.map((item: unknown, index: number) => {
       const row = object(item, `updates[${index}]`);
       const sku = typeof row.sku === "string" ? row.sku.trim() : "";
       if (!sku) throw new Error(`updates[${index}].sku is required.`);
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
     }
 
     for (const sku of succeeded) {
-      const update = updates.find((item: { sku: string; patch: Record<string, unknown> }) => item.sku === sku)!;
+      const update = updates.find((item) => item.sku === sku)!;
       const listing = listingMap.get(sku)!;
       const patch = update.patch;
       const fulfillment = patch.fulfillment && typeof patch.fulfillment === "object" ? patch.fulfillment as Record<string, unknown> : {};
