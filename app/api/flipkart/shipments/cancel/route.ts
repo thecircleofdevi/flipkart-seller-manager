@@ -23,7 +23,9 @@ export async function POST(request: Request) {
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
 
-    let cancellationGroupIds = parseStringList(body?.cancellationGroupIds ?? [], "cancellationGroupIds", 100);
+    let cancellationGroupIds: string[] = Array.isArray(body?.cancellationGroupIds) && body.cancellationGroupIds.length
+      ? parseStringList(body.cancellationGroupIds, "cancellationGroupIds", 100)
+      : [];
     if (!cancellationGroupIds.length) {
       const shipmentDbIds = (owned ?? []).map((row) => row.id);
       const { data: shipmentItems, error: shipmentItemError } = await supabaseAdmin
