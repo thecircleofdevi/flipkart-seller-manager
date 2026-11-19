@@ -89,17 +89,15 @@ export async function POST(request: Request) {
       return row;
     });
 
-    const payload = action === "complete"
-      ? { returnIds, locationId }
-      : { returns: payloadRows };
-
     const result = await flipkartRequest<{
       returns?: Array<{ returnId?: string; processingStatus?: string; errorCode?: string; errorMessage?: string }>;
-    }>(ACTIONS[action].path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    }>(action === "complete"
+      ? `${ACTIONS[action].path}?locationId=${encodeURIComponent(locationId)}&returnIds=${encodeURIComponent(returnIds.join(","))}`
+      : ACTIONS[action].path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: action === "complete" ? undefined : JSON.stringify({ returns: payloadRows }),
+      });
 
     const rows = result.data.returns ?? [];
     const succeeded = rows
