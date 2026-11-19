@@ -240,7 +240,13 @@ export default function DashboardClient(props: Props) {
             }),
           });
           const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
+          if (!response.ok) {
+            if (result.capabilityUnavailable) {
+              setSyncMessage("Product catalogue enrichment is unavailable for this Flipkart seller/app. Listings, inventory and pricing were still synced.");
+              break;
+            }
+            throw new Error(result.error ?? stage.label + " failed");
+          }
           syncRunId = result.syncRunId ?? syncRunId;
           hasMore = Boolean(result.hasMore);
           batchNo = result.nextBatchNo ?? batchNo + 1;
