@@ -25,7 +25,7 @@ export async function GET(request: Request) {
       method: "GET",
       endpoint: "/sellers/v3/shipments/handover/counts",
       requestMeta: { locationId },
-      responseMeta: result.data,
+      responseMeta: result.data && typeof result.data === "object" ? result.data as Record<string, unknown> : {},
       statusCode: result.status,
       startedAt,
     });
