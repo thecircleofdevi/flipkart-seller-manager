@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { SyncAlreadyRunningError, claimSyncRun } from "@/lib/sync-lock";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -496,26 +497,13 @@ export async function POST(request: Request) {
       totalSeen = existingRun.records_seen ?? totalSeen;
       totalWritten = existingRun.records_written ?? totalWritten;
     } else {
-      const { data: run, error: runError } = await supabaseAdmin
-        .from("sync_runs")
-        .insert({
-          user_id: userId,
-          sync_type: "shipments",
-          status: "running",
-          started_at: startedAt,
-          metadata: {
-            mode,
-            filterType,
-            shipmentType: shipmentType ?? null,
-            modifiedFrom: modifiedFrom.toISOString(),
-            modifiedTo: modifiedTo.toISOString(),
-          },
-        })
-        .select("id")
-        .single();
-
-      if (runError) throw runError;
-      runId = run.id;
+      runId = await claimSyncRun(userId, "shipments", checkpointDomain, {
+        mode,
+        filterType,
+        shipmentType: shipmentType ?? null,
+        modifiedFrom: modifiedFrom.toISOString(),
+        modifiedTo: modifiedTo.toISOString(),
+      });
     }
 
     if (!runId) throw new Error("Shipment sync run could not be initialized.");
@@ -688,6 +676,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
+    }
 
     if (runId) {
       await supabaseAdmin
