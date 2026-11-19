@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-type Update = { sku: string; locationId: string; inventory: number };
+type Update = { sku: string; locationId?: string; inventory: number };
 type Result = { status?: string; errors?: unknown[]; attribute_errors?: unknown[] };
 
 export async function POST(request: Request) {
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
     const updates: Update[] = body.updates.map((item: unknown, index: number) => {
       const row = item as Partial<Update>;
       if (typeof row.sku !== "string" || !row.sku.trim()) throw new Error(`updates[${index}].sku is required.`);
-      if (typeof row.locationId !== "string" || !row.locationId.trim()) throw new Error(`updates[${index}].locationId is required.`);
-      return { sku: row.sku.trim(), locationId: row.locationId.trim(), inventory: assertNonNegativeInteger(row.inventory, `updates[${index}].inventory`) };
+      const locationId = typeof row.locationId === "string" && row.locationId.trim() ? row.locationId.trim() : undefined;
+      return { sku: row.sku.trim(), locationId, inventory: assertNonNegativeInteger(row.inventory, `updates[${index}].inventory`) };
     });
 
     const skus = [...new Set(updates.map((u) => u.sku))];
@@ -35,6 +35,20 @@ export async function POST(request: Request) {
     const listingMap = new Map((listings ?? []).map((row) => [row.sku, row]));
     for (const update of updates) {
       if (!listingMap.get(update.sku)?.flipkart_product_id) throw new Error(`Listing ${update.sku} has no Flipkart product_id. Sync the catalogue first.`);
+      if (!update.locationId) {
+        const { data: locations, error: locationError } = await supabaseAdmin
+          .from("listing_locations")
+          .select("locations:location_id(flipkart_location_id)")
+          .eq("user_id", userId)
+          .eq("listing_id", listingMap.get(update.sku)!.id);
+        if (locationError) throw locationError;
+        const ids = [...new Set((locations ?? []).map((row) => {
+          const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
+          return location?.flipkart_location_id ?? null;
+        }).filter((value): value is string => Boolean(value)))];
+        if (ids.length !== 1) throw new Error(`Listing ${update.sku} has multiple or unknown locations. Supply locationId explicitly.`);
+        update.locationId = ids[0];
+      }
     }
 
     const payload: Record<string, unknown> = {};
