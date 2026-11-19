@@ -250,6 +250,35 @@ export default function DashboardClient(props: Props) {
     return () => { cancelled = true; };
   }, [syncing, autoSyncing]);
 
+  async function downloadShipmentDocument(type: "labels" | "invoices" | "forms", shipmentId: string) {
+    try {
+      const response = await fetch(`/api/flipkart/shipments/documents?type=${type}&shipmentIds=${encodeURIComponent(shipmentId)}`);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error ?? "Document download failed");
+      }
+      const blob = await response.blob();
+      if (type === "forms") {
+        const text = await blob.text();
+        const formWindow = window.open("", "_blank");
+        if (!formWindow) throw new Error("Allow pop-ups to view shipment forms.");
+        formWindow.document.write(`<pre style="white-space:pre-wrap;font-family:system-ui;padding:24px">${text.replace(/</g, "&lt;")}</pre>`);
+        formWindow.document.close();
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `flipkart-${type}-${shipmentId}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "Document download failed");
+    }
+  }
+
   async function runSync(type: "shipments" | "listings") {
     setAutoSyncing(false);
     setSyncMessage(null);
