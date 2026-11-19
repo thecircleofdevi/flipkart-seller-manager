@@ -63,7 +63,6 @@ function normalizeShipmentState(eventType: string, attributes: Record<string, un
     delivered: "DELIVERED",
     Delivered: "DELIVERED",
     shipment_cancelled: "CANCELLED",
-    "shipment_cancelled": "CANCELLED",
     "Shipment Cancelled": "CANCELLED",
   };
 
