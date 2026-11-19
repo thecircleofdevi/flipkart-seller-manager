@@ -279,6 +279,61 @@ export default function DashboardClient(props: Props) {
     }
   }
 
+  async function mutate(path: string, body: unknown, successMessage: string) {
+    try {
+      setSyncMessage(null);
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok === false) throw new Error(result.error ?? "Action failed");
+      const failed = result.failed ? Object.keys(result.failed).length : 0;
+      setSyncMessage(failed ? `${successMessage} ${failed} item(s) failed.` : successMessage);
+      window.location.reload();
+    } catch (error) {
+      setSyncMessage(error instanceof Error ? error.message : "Action failed");
+    }
+  }
+
+  async function updateInventory(sku: string) {
+    const value = window.prompt(`Set inventory for ${sku}`, "0");
+    if (value === null) return;
+    const inventory = Number(value);
+    if (!Number.isInteger(inventory) || inventory < 0) {
+      setSyncMessage("Inventory must be a non-negative whole number.");
+      return;
+    }
+    await mutate("/api/flipkart/listings/update-inventory", { updates: [{ sku, inventory }] }, `Inventory updated for ${sku}.`);
+  }
+
+  async function updatePrice(sku: string) {
+    const mrpValue = window.prompt(`MRP for ${sku}`, "");
+    if (mrpValue === null) return;
+    const sellingValue = window.prompt(`Selling price for ${sku}`, "");
+    if (sellingValue === null) return;
+    const mrp = Number(mrpValue);
+    const sellingPrice = Number(sellingValue);
+    if (!Number.isInteger(mrp) || mrp <= 0 || !Number.isInteger(sellingPrice) || sellingPrice <= 0 || sellingPrice > mrp) {
+      setSyncMessage("Prices must be positive whole numbers and selling price cannot exceed MRP.");
+      return;
+    }
+    await mutate("/api/flipkart/listings/update-price", { updates: [{ sku, mrp, sellingPrice, currency: "INR" }] }, `Price updated for ${sku}.`);
+  }
+
+  async function dispatchShipment(shipmentId: string) {
+    if (!window.confirm(`Mark shipment ${shipmentId} as Ready to Dispatch?`)) return;
+    await mutate("/api/flipkart/shipments/dispatch", { shipmentIds: [shipmentId] }, `Shipment ${shipmentId} marked Ready to Dispatch.`);
+  }
+
+  async function cancelShipment(shipmentId: string) {
+    const reason = window.prompt("Cancellation reason: cannot_procure_item, not_enough_inventory, or b2b_order", "not_enough_inventory");
+    if (!reason) return;
+    if (!window.confirm(`Cancel shipment ${shipmentId}? This is a destructive Flipkart action.`)) return;
+    await mutate("/api/flipkart/shipments/cancel", { shipmentIds: [shipmentId], reason }, `Shipment ${shipmentId} cancelled.`);
+  }
+
   async function runSync(type: "shipments" | "listings") {
     setAutoSyncing(false);
     setSyncMessage(null);
@@ -435,11 +490,11 @@ export default function DashboardClient(props: Props) {
         {active !== "overview" && (
           <section className="workspace-view">
             <div className="view-hero"><div><span className="eyebrow">Workspace</span><h2>{title}</h2><p>Designed as a focused command surface. Search, inspect, then act without losing context.</p></div><div className="view-count">{active === "shipments" ? props.shipments.length : active === "returns" ? props.returns.length : active === "sync" ? props.syncRows.length : active === "listings" ? props.metrics.find((m) => m.label === "Listings")?.value ?? 0 : "—"}<span>records</span></div></div>
-            {active === "shipments" && <div className="table-card"><div className="table-toolbar"><span>Fulfilment queue</span><span>{filteredShipments.length} visible</span></div>{filteredShipments.length ? filteredShipments.map((s) => <div className="table-row" key={s.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div><span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span><span className="row-date">{date(s.dispatch_by)}</span><div style={{display:"flex",gap:6,marginLeft:"auto"}}><button className="text-button" onClick={() => s.flipkart_shipment_id && downloadShipmentDocument("labels", s.flipkart_shipment_id)}>Label</button><button className="text-button" onClick={() => s.flipkart_shipment_id && downloadShipmentDocument("invoices", s.flipkart_shipment_id)}>Invoice</button><button className="text-button" onClick={() => s.flipkart_shipment_id && downloadShipmentDocument("forms", s.flipkart_shipment_id)}>Forms</button></div></div>) : <div className="empty big">No shipments match your search.</div>}</div>}
+            {active === "shipments" && <div className="table-card"><div className="table-toolbar"><span>Fulfilment queue</span><span>{filteredShipments.length} visible</span></div>{filteredShipments.length ? filteredShipments.map((s) => <div className="table-row" key={s.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div><span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span><span className="row-date">{date(s.dispatch_by)}</span><div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>{s.flipkart_shipment_id && <><button className="text-button" onClick={() => downloadShipmentDocument("labels", s.flipkart_shipment_id!)}>Label</button><button className="text-button" onClick={() => downloadShipmentDocument("invoices", s.flipkart_shipment_id!)}>Invoice</button><button className="text-button" onClick={() => downloadShipmentDocument("forms", s.flipkart_shipment_id!)}>Forms</button>{s.state === "PACKED" && <button className="text-button" onClick={() => dispatchShipment(s.flipkart_shipment_id!)}>Ready</button>}{["APPROVED","PACKED","PACKING_IN_PROGRESS","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => cancelShipment(s.flipkart_shipment_id!)}>Cancel</button>}</>}</div></div>) : <div className="empty big">No shipments match your search.</div>}</div>}
             {active === "returns" && <div className="table-card">{props.returns.length ? props.returns.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{r.status ?? "Return"}</strong><small>{r.return_reason ?? "Reason not supplied"}</small></div></div><span className="badge">{date(r.created_at)}</span></div>) : <div className="empty big">No open returns. Your return desk is clear.</div>}</div>}
             {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "shipments" ? "Syncing fulfilment" : "Syncing catalogue"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing)} onClick={() => runSync("shipments")}>{syncing === "shipments" ? "Syncing fulfilment..." : "Sync fulfilment"}</button><button className="text-button" disabled={Boolean(syncing) || fullBackfillRunning} onClick={runFullShipmentBackfill}>{fullBackfillRunning ? "Backfilling history..." : "Full historical backfill"}</button><button className="text-button" disabled={Boolean(syncing)} onClick={() => runSync("listings")}>{syncing === "listings" ? "Syncing catalogue..." : "Sync catalogue"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
             {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><span>{filteredOrders.length} records · page {orderPage} / {Math.max(1, Math.ceil(filteredOrders.length / pageSize))}</span></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
-            {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} records · page {listingPage} / {Math.max(1, Math.ceil(filteredListings.length / pageSize))}</span></div>{visibleListings.length ? visibleListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span></div>) : <div className="empty big">No listings match your search.</div>}</div>}
+            {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} records · page {listingPage} / {Math.max(1, Math.ceil(filteredListings.length / pageSize))}</span></div>{visibleListings.length ? visibleListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span><div style={{display:"flex",gap:6,marginLeft:"auto"}}>{l.sku && <><button className="text-button" onClick={() => updateInventory(l.sku!)}>Stock</button><button className="text-button" onClick={() => updatePrice(l.sku!)}>Price</button></>}</div></div>) : <div className="empty big">No listings match your search.</div>}</div>}
             {active === "settings" && <div className="settings-grid"><div className="card setting-card"><span className="setting-icon">◉</span><div><strong>Flipkart connection</strong><p>Authenticated seller API connection is configured server-side.</p></div><span className="badge good">Connected</span></div><div className="card setting-card"><span className="setting-icon">◌</span><div><strong>Data health</strong><p>Supabase is serving the seller workspace.</p></div><span className="badge good">Healthy</span></div></div>}
           </section>
         )}
