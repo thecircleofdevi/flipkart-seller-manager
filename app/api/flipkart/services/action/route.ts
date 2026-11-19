@@ -31,12 +31,12 @@ export async function POST(request: Request) {
     const services = servicesInput.map((item: unknown, index: number) => {
       if (!item || typeof item !== "object") throw new Error(`services[${index}] must be an object.`);
       const row = item as Record<string, unknown>;
-      const shipmentId = required(row.shipmentId, `services[${index}].shipmentId`);
+      const serviceFulfilmentId = required(row.serviceFulfilmentId ?? row.service, `services[${index}].serviceFulfilmentId`);
       const locationId = required(row.locationId, `services[${index}].locationId`);
       const deliveryDate = required(row.deliveryDate ?? body?.deliveryDate, `services[${index}].deliveryDate`);
       if (!datePattern.test(deliveryDate)) throw new Error(`services[${index}].deliveryDate must use yyyy-MM-dd format.`);
 
-      const service: Record<string, unknown> = { shipmentId, locationId, deliveryDate };
+      const service: Record<string, unknown> = { serviceFulfilmentId, locationId, deliveryDate };
       if (action === "attempt") {
         const newDeliveryDate = required(row.newDeliveryDate ?? body?.newDeliveryDate, "newDeliveryDate");
         if (!datePattern.test(newDeliveryDate)) throw new Error("newDeliveryDate must use yyyy-MM-dd format.");
