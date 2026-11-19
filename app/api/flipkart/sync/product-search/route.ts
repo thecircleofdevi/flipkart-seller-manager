@@ -181,9 +181,29 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
-    if (runId) await supabaseAdmin.from("sync_runs").update({
-      status: "failed", finished_at: new Date().toISOString(), error_message: message,
-    }).eq("id", runId);
-    return NextResponse.json({ ok: false, error: message }, { status: message === "Unauthorized sync request." ? 401 : 500 });
+    const capabilityUnavailable = /^Flipkart API 404 on \/sellers\/listings\/v3\/product\/search:/.test(message);
+
+    if (runId) {
+      await supabaseAdmin.from("sync_runs").update({
+        status: capabilityUnavailable ? "skipped" : "failed",
+        finished_at: new Date().toISOString(),
+        error_message: capabilityUnavailable
+          ? "Flipkart product-search is not available for this seller/app. Listings, inventory and pricing sync can continue without product enrichment."
+          : message,
+      }).eq("id", runId);
+    }
+
+    return NextResponse.json(
+      {
+        ok: false,
+        capabilityUnavailable,
+        error: capabilityUnavailable
+          ? "Flipkart product-search is not available for this seller/app."
+          : message,
+      },
+      {
+        status: message === "Unauthorized sync request." ? 401 : capabilityUnavailable ? 424 : 500,
+      },
+    );
   }
 }
