@@ -84,8 +84,8 @@ export async function POST(request: Request) {
       };
     } else if (action === "shipments") {
       const pageSize = body?.pageSize === undefined ? 25 : Number(body.pageSize);
-      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
-        throw new Error("pageSize must be an integer between 1 and 100.");
+      if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 25) {
+        throw new Error("pageSize must be an integer between 1 and 25.");
       }
       payload = {
         taskId: requiredString(body?.taskId, "taskId"),
