@@ -377,6 +377,7 @@ export async function POST(request: Request) {
 
     const filterType = body?.filterType as FilterType | undefined;
     const shipmentType = body?.shipmentType as ShipmentType | undefined;
+    const mode = body?.mode === "full" ? "full" : "incremental";
     if (!filterType || !states[filterType]) {
       throw new Error("A valid shipment filterType is required.");
     }
@@ -385,7 +386,13 @@ export async function POST(request: Request) {
     let modifiedFrom: Date;
     let modifiedTo: Date;
 
-    if (body?.modifiedFrom && body?.modifiedTo) {
+    if (mode === "full") {
+      if (!body?.modifiedFrom || !body?.modifiedTo) {
+        throw new Error("Full shipment sync requires modifiedFrom and modifiedTo.");
+      }
+      modifiedFrom = new Date(body.modifiedFrom);
+      modifiedTo = new Date(body.modifiedTo);
+    } else if (body?.modifiedFrom && body?.modifiedTo) {
       modifiedFrom = new Date(body.modifiedFrom);
       modifiedTo = new Date(body.modifiedTo);
     } else {
@@ -452,8 +459,9 @@ export async function POST(request: Request) {
           status: "running",
           started_at: startedAt,
           metadata: {
-            mode: "incremental",
+            mode,
             filterType,
+            shipmentType: shipmentType ?? null,
             modifiedFrom: modifiedFrom.toISOString(),
             modifiedTo: modifiedTo.toISOString(),
           },
@@ -580,7 +588,7 @@ export async function POST(request: Request) {
         records_written: totalWritten,
         error_message: null,
         metadata: {
-          mode: "incremental",
+          mode,
           filterType,
           shipmentType: shipmentType ?? null,
           modifiedFrom: modifiedFrom.toISOString(),
@@ -598,6 +606,7 @@ export async function POST(request: Request) {
       ok: true,
       filterType,
       shipmentType: shipmentType ?? null,
+      mode,
       recordsSeen: totalSeen,
       recordsWritten: totalWritten,
       hasMore,
