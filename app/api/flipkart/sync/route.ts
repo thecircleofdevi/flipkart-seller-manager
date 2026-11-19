@@ -432,7 +432,9 @@ export async function POST(request: Request) {
       throw new Error("Shipment sync window cannot exceed 7 days.");
     }
 
-    const checkpointDomain = `shipments:${filterType}:${shipmentType ?? "ALL"}`;
+    const checkpointDomain = mode === "full"
+      ? `shipments:full:${filterType}:${shipmentType ?? "ALL"}:${modifiedFrom.toISOString()}`
+      : `shipments:incremental:${filterType}:${shipmentType ?? "ALL"}`;
     let checkpoint: { id: string; cursor: Record<string, unknown> } | null = null;
 
     const { data: checkpointRow, error: checkpointError } = await supabaseAdmin
@@ -521,23 +523,6 @@ export async function POST(request: Request) {
         ? normalizeFlipkartPath(body.nextPageUrl)
         : null;
     const nextPageUrl = bodyNextPageUrl ?? checkpointNextPageUrl;
-
-    if (!runId && checkpointNextPageUrl && checkpoint?.cursor?.syncRunId) {
-      const checkpointRunId = String(checkpoint.cursor.syncRunId);
-      const { data: checkpointRun } = await supabaseAdmin
-        .from("sync_runs")
-        .select("id,status,records_seen,records_written")
-        .eq("id", checkpointRunId)
-        .eq("user_id", userId)
-        .eq("sync_type", "shipments")
-        .maybeSingle();
-
-      if (checkpointRun && checkpointRun.status === "running") {
-        runId = checkpointRun.id;
-        totalSeen = checkpointRun.records_seen ?? 0;
-        totalWritten = checkpointRun.records_written ?? 0;
-      }
-    }
 
     const pageSize = 20;
     const filterBody = {
