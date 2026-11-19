@@ -91,7 +91,6 @@ export default function DashboardClient(props: Props) {
         ]
       : [
           { type: "listings" as const, label: "Catalogue, inventory & pricing" },
-          { type: "product_search" as const, label: "Product catalogue enrichment" },
         ];
 
     const runPaged = async (
@@ -134,8 +133,6 @@ export default function DashboardClient(props: Props) {
         });
       }
     };
-
-    let productEnrichmentUnavailable = false;
 
     const runStage = async (stage: typeof stages[number]) => {
       setSyncStage(stage.type);
@@ -226,41 +223,6 @@ export default function DashboardClient(props: Props) {
       }
 
       await runPaged("listings");
-      for (const internalState of ["ACTIVE", "INACTIVE", "READY_FOR_ACTIVATION", "ARCHIVED", "INACTIVATED_BY_FLIPKART"] as const) {
-        let batchNo = 0;
-        let syncRunId: string | null = null;
-        let hasMore = true;
-        while (hasMore && !cancelled) {
-          const response: Response = await fetch("/api/flipkart/sync/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "product_search",
-              internalState,
-              batchNo,
-              ...(syncRunId ? { syncRunId } : {}),
-            }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) {
-            if (result.capabilityUnavailable) {
-              productEnrichmentUnavailable = true;
-              setSyncMessage("Product catalogue enrichment is unavailable for this Flipkart seller/app. Listings, inventory and pricing were still synced.");
-              break;
-            }
-            throw new Error(result.error ?? stage.label + " failed");
-          }
-          syncRunId = result.syncRunId ?? syncRunId;
-          hasMore = Boolean(result.hasMore);
-          batchNo = result.nextBatchNo ?? batchNo + 1;
-          setSyncProgress({
-            status: hasMore ? "running" : "success",
-            elapsedSeconds: Math.floor((Date.now() - started) / 1000),
-            estimatedTotalSeconds: 180,
-            recordsWritten: result.recordsWritten ?? 0,
-          });
-        }
-      }
     };
 
     (async () => {
@@ -275,11 +237,9 @@ export default function DashboardClient(props: Props) {
             setSyncing("listings");
             return;
           }
-          setSyncMessage(productEnrichmentUnavailable
-            ? "Catalogue sync complete: listings, inventory and pricing reconciled. Product enrichment is unavailable for this Flipkart seller/app."
-            : syncing === "listings"
-              ? "Catalogue sync complete: listings, inventory, pricing and product data reconciled."
-              : "Fulfilment sync complete: orders, shipment details, tracking, returns and events reconciled.");
+          setSyncMessage(syncing === "listings"
+            ? "Catalogue sync complete: listings, inventory and pricing reconciled."
+            : "Fulfilment sync complete: orders, shipment details, tracking, returns and events reconciled.");
           window.location.reload();
         }
       } catch (error) {
