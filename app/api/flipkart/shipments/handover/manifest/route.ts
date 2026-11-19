@@ -57,6 +57,7 @@ export async function POST(request: Request) {
     const locationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
     if (!locationId) throw new Error("locationId is required.");
 
+    const requestedVendor = typeof body?.vendorGroupCode === "string" ? body.vendorGroupCode.trim() : "";
     const countsResponse = await flipkartRequest<unknown>(
       `/sellers/v3/shipments/handover/counts?locationId=${encodeURIComponent(locationId)}`,
       { method: "GET" },
@@ -65,25 +66,34 @@ export async function POST(request: Request) {
     const counts: VendorCount[] = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw as VendorCount] : [];
     const usable = counts.filter((x) => typeof x.vendorGroupCode === "string" && x.vendorGroupCode.trim() && Number(x.count ?? 0) > 0);
     if (!usable.length) throw new Error("Flipkart returned no dispatchable shipments for handover.");
+    if (!requestedVendor) throw new Error("vendorGroupCode is required. First call GET on this route to see available handover vendors.");
+    const selected = usable.find((x) => x.vendorGroupCode === requestedVendor);
+    if (!selected) throw new Error("vendorGroupCode is not a current dispatchable vendor for this location.");
 
-    const params = usable.map((x) => ({
-      vendorGroupCode: x.vendorGroupCode,
+    const params = [{
+      vendorGroupCode: selected.vendorGroupCode,
       locationId,
-      isMps: Boolean(x.isMps),
-      ...(x.isMps ? { pickUpDate: { after: x.pickUpDate?.after, before: x.pickUpDate?.before } } : {}),
-    }));
+      isMps: Boolean(selected.isMps),
+      ...(selected.isMps ? { pickUpDate: { after: selected.pickUpDate?.after, before: selected.pickUpDate?.before } } : {}),
+    }];
 
     const result = await flipkartBinaryRequest("/sellers/v3/shipments/manifest", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ params, vendorGroupCode: usable[0].vendorGroupCode, locationId, isMps: usable.length === 1 ? Boolean(usable[0].isMps) : false }),
+      body: JSON.stringify({
+        params,
+        vendorGroupCode: selected.vendorGroupCode,
+        locationId,
+        isMps: Boolean(selected.isMps),
+        ...(selected.isMps ? { pickUpDate: { after: selected.pickUpDate?.after, before: selected.pickUpDate?.before } } : {}),
+      }),
     });
 
     await logFlipkartMutation({
       userId,
       method: "POST",
       endpoint: "/sellers/v3/shipments/manifest",
-      requestMeta: { locationId, vendorGroups: usable.map((x) => x.vendorGroupCode), counts: usable.map((x) => x.count) },
+      requestMeta: { locationId, vendorGroupCode: selected.vendorGroupCode, count: selected.count, isMps: selected.isMps },
       responseMeta: { contentType: result.contentType, contentDisposition: result.contentDisposition, bytes: result.data.byteLength },
       statusCode: result.status,
       startedAt,
