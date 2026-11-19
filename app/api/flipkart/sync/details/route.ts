@@ -24,7 +24,10 @@ type ShipmentDetail = {
   }>;
 };
 
-type ShipmentDetailResponse = ShipmentDetail | ShipmentDetail[];
+type ShipmentDetailResponse =
+  | ShipmentDetail
+  | ShipmentDetail[]
+  | { shipments?: ShipmentDetail[]; shipmentDetails?: ShipmentDetail[]; data?: ShipmentDetail[] };
 
 function requiredEnv(name: string) {
   const value = process.env[name];
@@ -56,7 +59,24 @@ async function requestWithRetry<T>(path: string, attempts = 4) {
 
 function asArray(payload: ShipmentDetailResponse): ShipmentDetail[] {
   if (Array.isArray(payload)) return payload;
-  if (payload && typeof payload === "object" && "shipmentId" in payload) return [payload];
+  if (!payload || typeof payload !== "object") return [];
+
+  if ("shipmentId" in payload && typeof payload.shipmentId === "string") {
+    return [payload];
+  }
+
+  if ("shipments" in payload && Array.isArray(payload.shipments)) {
+    return payload.shipments;
+  }
+
+  if ("shipmentDetails" in payload && Array.isArray(payload.shipmentDetails)) {
+    return payload.shipmentDetails;
+  }
+
+  if ("data" in payload && Array.isArray(payload.data)) {
+    return payload.data;
+  }
+
   return [];
 }
 
@@ -114,6 +134,13 @@ export async function POST(request: Request) {
       );
 
       const details = asArray(result.data);
+
+      if (!details.length && batch.length) {
+        throw new Error(
+          `Flipkart shipment detail response contained no shipment records for a batch of ${batch.length}. The response shape may have changed.`,
+        );
+      }
+
       for (const detail of details) {
         if (!detail.shipmentId) continue;
         const local = batch.find((row) => row.flipkart_shipment_id === detail.shipmentId);
@@ -154,6 +181,10 @@ export async function POST(request: Request) {
 
         updated++;
       }
+    }
+
+    if (shipments.length > 0 && updated === 0) {
+      throw new Error("Shipment detail sync completed without updating any shipment records.");
     }
 
     const { error: finishError } = await supabaseAdmin
