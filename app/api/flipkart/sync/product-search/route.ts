@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { SyncAlreadyRunningError, claimSyncRun } from "@/lib/sync-lock";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -117,14 +118,7 @@ export async function POST(request: Request) {
       if (!existing) throw new Error("Product search sync run was not found.");
       if (existing.status === "failed") throw new Error("Product search sync run has already failed.");
     } else {
-      const { data: run, error } = await supabaseAdmin.from("sync_runs").insert({
-        user_id: userId,
-        sync_type: "product_search",
-        status: "running",
-        metadata: { internalState, batchNo },
-      }).select("id").single();
-      if (error) throw error;
-      runId = run.id;
+      runId = await claimSyncRun(userId, "product_search", "product_search:" + internalState, { internalState, batchNo });
     }
 
     const { data: state } = await supabaseAdmin.from("sync_runs").select("records_seen,records_written").eq("id", runId).single();
@@ -181,6 +175,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
+    }
     const capabilityUnavailable = /^Flipkart API 404 on \/sellers\/listings\/v3\/product\/search:/.test(message);
 
     if (runId) {
