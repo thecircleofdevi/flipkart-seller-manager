@@ -77,11 +77,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, action, succeeded, results: responseRows });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Self-ship action failed.";
-    if (userId) await logFlipkartMutation({ userId, method: "POST", endpoint: actionEndpoint(message), requestMeta: {}, responseMeta: {}, statusCode: message === "Unauthorized." ? 401 : 502, errorMessage: message, startedAt });
+    if (userId) await logFlipkartMutation({ userId, method: "POST", endpoint: "/sellers/v3/shipments/selfShip/*", requestMeta: {}, responseMeta: {}, statusCode: message === "Unauthorized." ? 401 : 502, errorMessage: message, startedAt });
     return NextResponse.json({ ok: false, error: message }, { status: message === "Unauthorized." ? 401 : 400 });
   }
-}
-
-function actionEndpoint(message: string) {
-  return message.includes("deliveryAttempt") ? ACTIONS.deliveryAttempt.path : "/sellers/v3/shipments/selfShip/delivery";
 }
