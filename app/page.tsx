@@ -38,7 +38,8 @@ export default async function Home() {
   ]);
 
   const failed = [...metricResults, { error: recentSyncs.error }, { error: openReturns.error }, { error: activeShipments.error }, { error: inventory.error }, { error: failedNotifications.error }].some((result) => result.error);
-  const failedSyncs = (recentSyncs.data ?? []).filter((r) => r.status === "failed");
+  const syncFailureCutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const failedSyncs = (recentSyncs.data ?? []).filter((r) => r.status === "failed" && new Date(r.started_at).getTime() >= syncFailureCutoff);
   const overdueShipments = (activeShipments.data ?? []).filter((s) => s.dispatch_by && new Date(s.dispatch_by).getTime() < Date.now());
   const lowStock = (inventory.data ?? []).filter((row) => (row.quantity ?? 0) <= 3).length;
 
