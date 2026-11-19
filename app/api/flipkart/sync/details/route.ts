@@ -145,7 +145,7 @@ export async function POST(request: Request) {
 
         const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
           user_id: userId,
-          sync_run_id: run.id,
+          sync_run_id: runId,
           source_type: "shipment_details",
           external_id: detail.shipmentId,
           payload: detail,
@@ -164,7 +164,7 @@ export async function POST(request: Request) {
         records_seen: shipments.length,
         records_written: updated,
       })
-      .eq("id", run.id);
+      .eq("id", runId);
     if (finishError) throw finishError;
 
     return NextResponse.json({ ok: true, shipmentsSeen: shipments.length, shipmentsUpdated: updated });
