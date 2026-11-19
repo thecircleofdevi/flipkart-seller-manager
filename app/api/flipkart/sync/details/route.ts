@@ -143,13 +143,13 @@ export async function POST(request: Request) {
 
         if (error) throw error;
 
-        const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").insert({
+        const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").upsert({
           user_id: userId,
           sync_run_id: runId,
           source_type: "shipment_details",
           external_id: detail.shipmentId,
           payload: detail,
-        });
+        }, { onConflict: "user_id,source_type,external_id,payload_hash" });
         if (rawError) throw rawError;
 
         updated++;
