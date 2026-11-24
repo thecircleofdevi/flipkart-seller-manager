@@ -22,14 +22,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ orders: data ?? [], total: count ?? 0, page, pageSize });
   }
 
-  const [orders, items, shipments, returns] = await Promise.all([
-    supabase.from("orders").select("id").or(`flipkart_order_id.ilike.%${q}%,status.ilike.%${q}%`).limit(5000),
-    supabase.from("order_items").select("order_id").or(`flipkart_order_item_id.ilike.%${q}%,sku.ilike.%${q}%,fsn.ilike.%${q}%,cancellation_group_id.ilike.%${q}%`).limit(5000),
-    supabase.from("shipments").select("order_id").or(`flipkart_shipment_id.ilike.%${q}%,tracking_id.ilike.%${q}%,courier_name.ilike.%${q}%`).limit(5000),
-    supabase.from("returns").select("order_item_id,shipment_id").ilike("flipkart_return_id", `%${q}%`).limit(5000),
+  const like = `%${q.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  const [orders, orderStatus, items, itemSku, itemFsn, itemCancel, shipments, shipmentTracking, shipmentCourier, returns] = await Promise.all([
+    supabase.from("orders").select("id").ilike("flipkart_order_id", like).limit(5000),
+    supabase.from("orders").select("id").ilike("status", like).limit(5000),
+    supabase.from("order_items").select("order_id").ilike("flipkart_order_item_id", like).limit(5000),
+    supabase.from("order_items").select("order_id").ilike("sku", like).limit(5000),
+    supabase.from("order_items").select("order_id").ilike("fsn", like).limit(5000),
+    supabase.from("order_items").select("order_id").ilike("cancellation_group_id", like).limit(5000),
+    supabase.from("shipments").select("order_id").ilike("flipkart_shipment_id", like).limit(5000),
+    supabase.from("shipments").select("order_id").ilike("tracking_id", like).limit(5000),
+    supabase.from("shipments").select("order_id").ilike("courier_name", like).limit(5000),
+    supabase.from("returns").select("order_item_id,shipment_id").ilike("flipkart_return_id", like).limit(5000),
   ]);
 
-  const firstError = [orders, items, shipments, returns].find((r) => r.error)?.error;
+  const firstError = [orders, orderStatus, items, itemSku, itemFsn, itemCancel, shipments, shipmentTracking, shipmentCourier, returns].find((r) => r.error)?.error;
   if (firstError) return NextResponse.json({ error: firstError.message }, { status: 500 });
 
   const itemIds = (returns.data ?? []).map((r) => r.order_item_id).filter(Boolean) as string[];
@@ -47,8 +54,14 @@ export async function GET(request: NextRequest) {
 
   const ids = [...new Set([
     ...(orders.data ?? []).map((r) => r.id),
+    ...(orderStatus.data ?? []).map((r) => r.id),
     ...(items.data ?? []).map((r) => r.order_id),
+    ...(itemSku.data ?? []).map((r) => r.order_id),
+    ...(itemFsn.data ?? []).map((r) => r.order_id),
+    ...(itemCancel.data ?? []).map((r) => r.order_id),
     ...(shipments.data ?? []).map((r) => r.order_id),
+    ...(shipmentTracking.data ?? []).map((r) => r.order_id),
+    ...(shipmentCourier.data ?? []).map((r) => r.order_id),
     ...returnOrderIds,
   ])].filter(Boolean);
 
