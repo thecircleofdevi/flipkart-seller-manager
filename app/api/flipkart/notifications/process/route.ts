@@ -61,15 +61,28 @@ export async function POST(request: Request) {
     assertAuthorized(request);
     const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
 
-    const { data: notifications, error: readError } = await supabaseAdmin
-      .from("notifications")
-      .select("id,event_type,shipment_id,location_id,event_timestamp,payload")
-      .eq("user_id", userId)
-      .eq("processing_status", "received")
-      .order("received_at", { ascending: true })
-      .limit(100);
+    const [receivedResult, retryResult] = await Promise.all([
+      supabaseAdmin
+        .from("notifications")
+        .select("id,event_type,shipment_id,location_id,event_timestamp,payload")
+        .eq("user_id", userId)
+        .eq("processing_status", "received")
+        .order("received_at", { ascending: true })
+        .limit(100),
+      supabaseAdmin
+        .from("notifications")
+        .select("id,event_type,shipment_id,location_id,event_timestamp,payload")
+        .eq("user_id", userId)
+        .eq("processing_status", "failed")
+        .ilike("processing_error", "Referenced shipment or return is not present locally yet%")
+        .order("received_at", { ascending: true })
+        .limit(100),
+    ]);
 
-    if (readError) throw readError;
+    if (receivedResult.error) throw receivedResult.error;
+    if (retryResult.error) throw retryResult.error;
+
+    const notifications = [...(receivedResult.data ?? []), ...(retryResult.data ?? [])];
 
     let processed = 0;
     let failed = 0;
