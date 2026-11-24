@@ -746,7 +746,7 @@ export default function LabelWorkspace() {
               </div>
             )}
             {batchReport.warnings.length > 0 && <div className="batch-warning-list">{batchReport.warnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}{batchReport.warnings.length > 8 && <div>+ {batchReport.warnings.length - 8} more warnings</div>}</div>}
-          </div>
+          </div>}
 
           {selected && <div className="crop-options">
             <div className="crop-options-head">
