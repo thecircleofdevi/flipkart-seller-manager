@@ -50,6 +50,7 @@ export default function DashboardClient(props: Props) {
   const [commandOpen, setCommandOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [selectedShipmentIds, setSelectedShipmentIds] = useState<Set<string>>(new Set());
+  const [shipmentView, setShipmentView] = useState<"all" | "needs_action" | "packing" | "ready" | "shipped" | "delivered" | "hold" | "cancelled" | "delayed">("all");
   const [loadedOrder, setLoadedOrder] = useState<Props["orderDetails"][number] | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -68,9 +69,24 @@ export default function DashboardClient(props: Props) {
 
   const filteredShipments = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return props.shipments;
-    return props.shipments.filter((s) => [s.flipkart_shipment_id, s.state, s.tracking_id, s.courier_name].some((v) => v?.toLowerCase().includes(q)));
-  }, [query, props.shipments]);
+    const now = Date.now();
+    return props.shipments.filter((s) => {
+      const state = (s.state ?? "").toUpperCase();
+      const overdue = Boolean(s.dispatch_by && new Date(s.dispatch_by).getTime() < now && !["DELIVERED", "CANCELLED"].includes(state));
+      const viewMatch =
+        shipmentView === "all" ||
+        (shipmentView === "needs_action" && (s.hold === true || ["APPROVED", "PACKED", "PACKING_IN_PROGRESS", "READY_TO_DISPATCH"].includes(state) || overdue)) ||
+        (shipmentView === "packing" && ["PACKING_IN_PROGRESS", "PACKED"].includes(state)) ||
+        (shipmentView === "ready" && state === "READY_TO_DISPATCH") ||
+        (shipmentView === "shipped" && state === "SHIPPED") ||
+        (shipmentView === "delivered" && state === "DELIVERED") ||
+        (shipmentView === "hold" && s.hold === true) ||
+        (shipmentView === "cancelled" && state === "CANCELLED") ||
+        (shipmentView === "delayed" && overdue);
+      const searchMatch = !q || [s.flipkart_shipment_id, s.state, s.tracking_id, s.courier_name].some((v) => v?.toLowerCase().includes(q));
+      return viewMatch && searchMatch;
+    });
+  }, [query, props.shipments, shipmentView]);
 
   const title = nav.find((item) => item.id === active)?.label ?? "Overview";
   const filteredOrders = remoteOrders;
@@ -713,6 +729,19 @@ export default function DashboardClient(props: Props) {
           <section className="workspace-view">
             <div className="view-hero"><div><span className="eyebrow">Workspace</span><h2>{title}</h2><p>Designed as a focused command surface. Search, inspect, then act without losing context.</p></div><div className="view-count">{active === "shipments" ? props.shipments.length : active === "returns" ? props.returns.length : active === "sync" ? props.syncRows.length : active === "listings" ? props.metrics.find((m) => m.label === "Listings")?.value ?? 0 : "—"}<span>records</span></div></div>
             {active === "shipments" && <div className="table-card">
+              <div className="shipment-tabs" role="tablist" aria-label="Shipment views">
+                {([
+                  ["all", "All"],
+                  ["needs_action", "Needs Action"],
+                  ["packing", "Packing"],
+                  ["ready", "Ready to Dispatch"],
+                  ["shipped", "Shipped"],
+                  ["delivered", "Delivered"],
+                  ["hold", "On Hold"],
+                  ["cancelled", "Cancelled"],
+                  ["delayed", "Delayed"],
+                ] as const).map(([id, label]) => <button key={id} className={"text-button" + (shipmentView === id ? " active-tab" : "")} onClick={() => setShipmentView(id)} role="tab" aria-selected={shipmentView === id}>{label}</button>)}
+              </div>
               <div className="table-toolbar shipment-toolbar">
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
                   <input type="checkbox" aria-label="Select all visible shipments"
