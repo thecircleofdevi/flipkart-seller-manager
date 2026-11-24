@@ -48,6 +48,12 @@ export default function DashboardClient(props: Props) {
   const [query, setQuery] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [loadedOrder, setLoadedOrder] = useState<Props["orderDetails"][number] | null>(null);
+  const [orderLoading, setOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
+  const [remoteOrders, setRemoteOrders] = useState(props.orders);
+  const [remoteOrderTotal, setRemoteOrderTotal] = useState(props.orders.length);
+  const [orderSearchLoading, setOrderSearchLoading] = useState(false);
   const [syncing, setSyncing] = useState<string | null>(null);
   const [autoSyncing, setAutoSyncing] = useState(false);
   const [fullBackfillRunning, setFullBackfillRunning] = useState(false);
@@ -62,18 +68,56 @@ export default function DashboardClient(props: Props) {
   }, [query, props.shipments]);
 
   const title = nav.find((item) => item.id === active)?.label ?? "Overview";
-  const orderDetailsById = useMemo(() => new Map(props.orderDetails.map((o) => [o.id, o])), [props.orderDetails]);
-  const filteredOrders = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return props.orders;
-    return props.orders.filter((o) => [o.flipkart_order_id, o.status, orderDetailsById.get(o.id)?.searchText].some((v) => v?.toLowerCase().includes(q)));
-  }, [query, props.orders, orderDetailsById]);
+  const filteredOrders = remoteOrders;
   const filteredListings = useMemo(() => { const q = query.trim().toLowerCase(); if (!q) return props.listings; return props.listings.filter((l) => [l.sku, l.fsn, l.status, l.procurement_type, l.shipping_provider].some((v) => v?.toLowerCase().includes(q))); }, [query, props.listings]);
   const [orderPage, setOrderPage] = useState(1);
   const [listingPage, setListingPage] = useState(1);
   const pageSize = 50;
-  const visibleOrders = filteredOrders.slice((orderPage - 1) * pageSize, orderPage * pageSize);
+  const visibleOrders = filteredOrders;
   const visibleListings = filteredListings.slice((listingPage - 1) * pageSize, listingPage * pageSize);
+  useEffect(() => {
+    const controller = new AbortController();
+    setOrderSearchLoading(true);
+    fetch(`/api/orders/search?q=${encodeURIComponent(query.trim())}&page=${orderPage}&pageSize=${pageSize}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Unable to load orders.");
+        setRemoteOrders(body.orders ?? []);
+        setRemoteOrderTotal(body.total ?? 0);
+      })
+      .catch((error) => {
+        if (error?.name !== "AbortError") setOrderError(error instanceof Error ? error.message : "Unable to load orders.");
+      })
+      .finally(() => setOrderSearchLoading(false));
+    return () => controller.abort();
+  }, [query, orderPage]);
+
+  useEffect(() => {
+    if (!selectedOrderId) {
+      setLoadedOrder(null);
+      setOrderError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setOrderLoading(true);
+    setOrderError(null);
+    fetch(`/api/orders/${selectedOrderId}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Unable to load order.");
+        setLoadedOrder(body);
+      })
+      .catch((error) => {
+        if (error?.name !== "AbortError") setOrderError(error instanceof Error ? error.message : "Unable to load order.");
+      })
+      .finally(() => setOrderLoading(false));
+    return () => controller.abort();
+  }, [selectedOrderId]);
+
+  useEffect(() => {
+    setOrderPage(1);
+  }, [query]);
+
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.sessionStorage.getItem("seller-manager-auto-sync-started:" + props.loginKey) === "1") return;
@@ -640,7 +684,7 @@ export default function DashboardClient(props: Props) {
             {active === "shipments" && <div className="table-card"><div className="table-toolbar"><span>Fulfilment queue</span><span>{filteredShipments.length} visible</span></div>{filteredShipments.length ? filteredShipments.map((s) => <div className="table-row" key={s.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div><span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span><span className="row-date">{date(s.dispatch_by)}</span><div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>{s.state === "READY_TO_DISPATCH" && <button className="text-button" onClick={downloadHandoverManifest}>Manifest</button>}{s.flipkart_shipment_id && <><button className="text-button" onClick={() => downloadShipmentDocument("labels", s.flipkart_shipment_id!)}>Label</button><button className="text-button" onClick={() => downloadShipmentDocument("invoices", s.flipkart_shipment_id!)}>Invoice</button><button className="text-button" onClick={() => downloadShipmentDocument("forms", s.flipkart_shipment_id!)}>Forms</button>{s.state === "PACKED" && <button className="text-button" onClick={() => dispatchShipment(s.flipkart_shipment_id!)}>Ready</button>}{["APPROVED","PACKED","PACKING_IN_PROGRESS","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => cancelShipment(s.flipkart_shipment_id!)}>Cancel</button>}{s.shipment_type === "SELF" && ["APPROVED","PACKED","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => selfShipDispatch(s.flipkart_shipment_id!)}>Self dispatch</button>}{s.shipment_type === "SELF" && s.state === "SHIPPED" && <><button className="text-button" onClick={() => selfShipDelivery("delivery", s.flipkart_shipment_id!)}>Deliver</button><button className="text-button" onClick={() => selfShipDelivery("deliveryAttempt", s.flipkart_shipment_id!)}>Attempt</button></>}</>}</div></div>) : <div className="empty big">No shipments match your search.</div>}</div>}
             {active === "returns" && <><div className="table-card">{props.returns.length ? props.returns.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{r.status ?? "Return"}</strong><small>{r.flipkart_return_id ?? "Return ID pending"} · {r.return_reason ?? "Reason not supplied"}</small></div></div><span className="badge">{date(r.created_at)}</span><div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap"}}>{r.flipkart_return_id && r.status === "CREATED" && <><button className="text-button" onClick={() => returnAction("approve", r.flipkart_return_id!)}>Approve</button><button className="text-button" onClick={() => returnAction("reject", r.flipkart_return_id!)}>Reject</button></>}{r.flipkart_return_id && r.status === "APPROVED" && <button className="text-button" onClick={() => returnAction("pickup", r.flipkart_return_id!)}>Picked up</button>}{r.flipkart_return_id && r.status === "PICKUP_ATTEMPTED" && <button className="text-button" onClick={() => returnAction("pickupAttempt", r.flipkart_return_id!)}>Pickup attempt</button>}{r.flipkart_return_id && r.status === "PICKED_UP" && <button className="text-button" onClick={() => returnAction("complete", r.flipkart_return_id!)}>Complete</button>}</div></div>) : <div className="empty big">No open returns. Your return desk is clear.</div>}</div></>}
             {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "shipments" ? "Syncing fulfilment" : "Syncing catalogue"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing)} onClick={() => runSync("shipments")}>{syncing === "shipments" ? "Syncing fulfilment..." : "Sync fulfilment"}</button><button className="text-button" disabled={Boolean(syncing) || fullBackfillRunning} onClick={runFullShipmentBackfill}>{fullBackfillRunning ? "Backfilling history..." : "Full historical backfill"}</button><button className="text-button" disabled={Boolean(syncing)} onClick={() => runSync("listings")}>{syncing === "listings" ? "Syncing catalogue..." : "Sync catalogue"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
-            {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><span>{filteredOrders.length} records · page {orderPage} / {Math.max(1, Math.ceil(filteredOrders.length / pageSize))}</span></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
+            {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><div style={{display:"flex",alignItems:"center",gap:8}}><span>{remoteOrderTotal} records · page {orderPage} / {Math.max(1, Math.ceil(remoteOrderTotal / pageSize))}{orderSearchLoading ? " · loading…" : ""}</span><button className="text-button" disabled={orderPage <= 1 || orderSearchLoading} onClick={() => setOrderPage((p) => Math.max(1, p - 1))}>Previous</button><button className="text-button" disabled={orderPage >= Math.max(1, Math.ceil(remoteOrderTotal / pageSize)) || orderSearchLoading} onClick={() => setOrderPage((p) => p + 1)}>Next</button></div></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
             {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} records · page {listingPage} / {Math.max(1, Math.ceil(filteredListings.length / pageSize))}</span></div>{visibleListings.length ? visibleListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span><div style={{display:"flex",gap:6,marginLeft:"auto"}}>{l.sku && <><button className="text-button" onClick={() => updateInventory(l.sku!)}>Stock</button><button className="text-button" onClick={() => updatePrice(l.sku!)}>Price</button></>}</div></div>) : <div className="empty big">No listings match your search.</div>}</div>}
             {active === "settings" && <div className="settings-grid"><div className="card setting-card"><span className="setting-icon">◉</span><div><strong>Flipkart connection</strong><p>Authenticated seller API connection is configured server-side.</p></div><span className="badge good">Connected</span></div><div className="card setting-card"><span className="setting-icon">◌</span><div><strong>Data health</strong><p>Supabase is serving the seller workspace.</p></div><span className="badge good">Healthy</span></div></div>}
           </section>
@@ -650,7 +694,9 @@ export default function DashboardClient(props: Props) {
       </main>
 
       {selectedOrderId && (() => {
-        const order = props.orderDetails.find((o) => o.id === selectedOrderId);
+        const order = loadedOrder;
+        if (orderLoading) return <div className="drawer-backdrop" onClick={() => setSelectedOrderId(null)}><aside className="order-drawer" onClick={(e) => e.stopPropagation()}><div className="drawer-head"><div><span className="eyebrow">Order 360</span><h2>Loading order…</h2><p>Fetching live order relationships.</p></div><button className="drawer-close" onClick={() => setSelectedOrderId(null)}>×</button></div></aside></div>;
+        if (orderError) return <div className="drawer-backdrop" onClick={() => setSelectedOrderId(null)}><aside className="order-drawer" onClick={(e) => e.stopPropagation()}><div className="drawer-head"><div><span className="eyebrow">Order 360</span><h2>Unable to load order</h2><p>{orderError}</p></div><button className="drawer-close" onClick={() => setSelectedOrderId(null)}>×</button></div></aside></div>;
         if (!order) return null;
         return <div className="drawer-backdrop" onClick={() => setSelectedOrderId(null)}>
           <aside className="order-drawer" onClick={(e) => e.stopPropagation()}>
