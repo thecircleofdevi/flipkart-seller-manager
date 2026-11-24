@@ -59,6 +59,7 @@ export default function LabelWorkspace() {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState(DEFAULT_PRESET_NAME);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [shipmentIdsInput, setShipmentIdsInput] = useState("");
@@ -86,7 +87,10 @@ export default function LabelWorkspace() {
       if (!cancelled && data) {
         setPresets(data as Preset[]);
         const defaultPreset = (data as Preset[]).find((p) => p.is_default);
-        if (defaultPreset) setSelectedPresetId(defaultPreset.id);
+        if (defaultPreset) {
+          setSelectedPresetId(defaultPreset.id);
+          setPresetName(defaultPreset.name);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -311,41 +315,76 @@ export default function LabelWorkspace() {
 
   async function savePreset() {
     if (!selected) return;
-    setBusy(true);
-    setMessage(null);
+    setBusy(true); setMessage(null);
     try {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("You are not signed in.");
       const name = presetName.trim() || DEFAULT_PRESET_NAME;
-      const { data, error } = await (supabase as any)
-        .from("label_crop_presets")
-        .insert({
-          user_id: user.id,
-          name,
-          page_width_pt: selected.pageWidth,
-          page_height_pt: selected.pageHeight,
-          crop_x_pt: crop.x,
-          crop_y_pt: crop.y,
-          crop_width_pt: crop.width,
-          crop_height_pt: crop.height,
-          output_width_pt: OUTPUT_W,
-          output_height_pt: OUTPUT_H,
-          is_default: true,
-        })
-        .select("id,name,page_width_pt,page_height_pt,crop_x_pt,crop_y_pt,crop_width_pt,crop_height_pt,output_width_pt,output_height_pt,is_default")
-        .single();
-      if (error) throw error;
-
-      await (supabase as any).from("label_crop_presets").update({ is_default: false }).eq("user_id", user.id).neq("id", data.id);
-      setPresets((current) => [data as Preset, ...current.map((p) => ({ ...p, is_default: false }))]);
-      setSelectedPresetId(data.id);
-      setMessage(`Preset “${name}” saved and set as default.`);
+      if (editingPresetId) {
+        const { data, error } = await (supabase as any).from("label_crop_presets").update({
+          name, page_width_pt: selected.pageWidth, page_height_pt: selected.pageHeight,
+          crop_x_pt: crop.x, crop_y_pt: crop.y, crop_width_pt: crop.width, crop_height_pt: crop.height,
+          output_width_pt: OUTPUT_W, output_height_pt: OUTPUT_H,
+        }).eq("id", editingPresetId).eq("user_id", user.id)
+          .select("id,name,page_width_pt,page_height_pt,crop_x_pt,crop_y_pt,crop_width_pt,crop_height_pt,output_width_pt,output_height_pt,is_default").single();
+        if (error) throw error;
+        setPresets((current) => current.map((p) => p.id === data.id ? data as Preset : p));
+        setSelectedPresetId(data.id); setEditingPresetId(null);
+        setMessage("Preset “" + name + "” updated.");
+      } else {
+        const { data, error } = await (supabase as any).from("label_crop_presets").insert({
+          user_id: user.id, name, page_width_pt: selected.pageWidth, page_height_pt: selected.pageHeight,
+          crop_x_pt: crop.x, crop_y_pt: crop.y, crop_width_pt: crop.width, crop_height_pt: crop.height,
+          output_width_pt: OUTPUT_W, output_height_pt: OUTPUT_H, is_default: true,
+        }).select("id,name,page_width_pt,page_height_pt,crop_x_pt,crop_y_pt,crop_width_pt,crop_height_pt,output_width_pt,output_height_pt,is_default").single();
+        if (error) throw error;
+        setPresets((current) => [data as Preset, ...current.map((p) => ({ ...p, is_default: false }))]);
+        setSelectedPresetId(data.id);
+        setMessage("Preset “" + name + "” saved and set as default.");
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save preset.");
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
+  }
+
+  async function makePresetDefault(presetId: string) {
+    setBusy(true); setMessage(null);
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("You are not signed in.");
+      const { data, error } = await (supabase as any).from("label_crop_presets").update({ is_default: true })
+        .eq("id", presetId).eq("user_id", user.id).select("id,is_default").single();
+      if (error) throw error;
+      setPresets((current) => current.map((p) => ({ ...p, is_default: p.id === data.id })));
+      setSelectedPresetId(data.id); setMessage("Default crop preset updated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to make preset default.");
+    } finally { setBusy(false); }
+  }
+
+  function startEditPreset(preset: Preset) {
+    setSelectedPresetId(preset.id); setEditingPresetId(preset.id); setPresetName(preset.name);
+    setMessage("Editing “" + preset.name + "”. Adjust the crop, then save changes.");
+  }
+
+  async function deletePreset(preset: Preset) {
+    if (!window.confirm("Delete the “" + preset.name + "” crop preset?")) return;
+    setBusy(true); setMessage(null);
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("You are not signed in.");
+      const { error } = await (supabase as any).from("label_crop_presets").delete().eq("id", preset.id).eq("user_id", user.id);
+      if (error) throw error;
+      setPresets((current) => current.filter((p) => p.id !== preset.id));
+      if (selectedPresetId === preset.id) setSelectedPresetId(null);
+      if (editingPresetId === preset.id) setEditingPresetId(null);
+      setMessage("Preset “" + preset.name + "” deleted.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to delete preset.");
+    } finally { setBusy(false); }
   }
 
   function getEffectiveCrop(sourceSize: { width: number; height: number }) {
@@ -370,10 +409,11 @@ export default function LabelWorkspace() {
     for (const sourcePage of pages) {
       const embedded = await output.embedPage(sourcePage);
       const sourceSize = sourcePage.getSize();
-      const cropX = clamp(crop.x, 0, sourceSize.width);
-      const cropYTop = clamp(crop.y, 0, sourceSize.height);
-      const cropW = clamp(crop.width, 1, sourceSize.width - cropX);
-      const cropH = clamp(crop.height, 1, sourceSize.height - cropYTop);
+      const effective = getEffectiveCrop(sourceSize);
+      const cropX = clamp(effective.x, 0, sourceSize.width);
+      const cropYTop = clamp(effective.y, 0, sourceSize.height);
+      const cropW = clamp(effective.width, 1, sourceSize.width - cropX);
+      const cropH = clamp(effective.height, 1, sourceSize.height - cropYTop);
       const cropYBottom = sourceSize.height - cropYTop - cropH;
       const page = output.addPage([OUTPUT_W, OUTPUT_H]);
       page.drawPage(embedded, {
@@ -501,8 +541,9 @@ export default function LabelWorkspace() {
         pdf.getPages().forEach((page, pageIndex) => {
           pages++;
           const size = page.getSize();
-          const fits = crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
-            crop.x + crop.width <= size.width + 0.5 && crop.y + crop.height <= size.height + 0.5;
+          const effective = getEffectiveCrop(size);
+          const fits = effective.x >= 0 && effective.y >= 0 && effective.width > 0 && effective.height > 0 &&
+            effective.x + effective.width <= size.width + 0.5 && effective.y + effective.height <= size.height + 0.5;
           const widthDelta = reference ? Math.abs(size.width - reference.width) / Math.max(reference.width, 1) : 0;
           const heightDelta = reference ? Math.abs(size.height - reference.height) / Math.max(reference.height, 1) : 0;
           const sizeMismatch = widthDelta > 0.02 || heightDelta > 0.02;
@@ -513,7 +554,7 @@ export default function LabelWorkspace() {
             warnings.push(`${item.file.name} · page ${pageIndex + 1}: ${pageWarnings.at(-1)}`);
           }
           if (sizeMismatch) {
-            pageWarnings.push("Page size differs from the selected reference page.");
+            pageWarnings.push("Page size differs from the selected reference page; the crop will be proportionally adapted.");
             warnings.push(`${item.file.name} · page ${pageIndex + 1}: ${pageWarnings.at(-1)}`);
           }
 
@@ -524,7 +565,7 @@ export default function LabelWorkspace() {
             fileName: item.file.name,
             width: size.width,
             height: size.height,
-            valid: fits && !sizeMismatch,
+            valid: fits,
             warning: pageWarnings.length ? pageWarnings.join(" ") : undefined,
           });
         });
@@ -606,10 +647,17 @@ export default function LabelWorkspace() {
           <div className="label-panel">
             <div className="label-panel-title">Saved presets</div>
             {presets.length ? presets.map((preset) => (
-              <button key={preset.id} className={"preset-row " + (selectedPresetId === preset.id ? "active" : "")} onClick={() => setSelectedPresetId(preset.id)}>
-                <div><strong>{preset.name}</strong><small>{Math.round(preset.crop_width_pt)} × {Math.round(preset.crop_height_pt)} pt · 4×6 output</small></div>
-                {preset.is_default && <span className="badge good">Default</span>}
-              </button>
+              <div key={preset.id} className={"preset-row " + (selectedPresetId === preset.id ? "active" : "")}>
+                <button className="preset-main" onClick={() => { setSelectedPresetId(preset.id); setPresetName(preset.name); setEditingPresetId(null); }} disabled={busy}>
+                  <div><strong>{preset.name}</strong><small>{Math.round(preset.crop_width_pt)} × {Math.round(preset.crop_height_pt)} pt · 4×6 output</small></div>
+                  {preset.is_default && <span className="badge good">Default</span>}
+                </button>
+                <div className="preset-actions">
+                  <button type="button" onClick={() => startEditPreset(preset)} disabled={busy}>Edit</button>
+                  {!preset.is_default && <button type="button" onClick={() => makePresetDefault(preset.id)} disabled={busy}>Make default</button>}
+                  <button type="button" onClick={() => deletePreset(preset)} disabled={busy}>Delete</button>
+                </div>
+              </div>
             )) : <div className="label-empty">No saved crop preset yet.</div>}
           </div>
         </aside>
@@ -789,8 +837,9 @@ export default function LabelWorkspace() {
 
           <div className="label-save-row">
             <input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder={DEFAULT_PRESET_NAME} />
-            <button className="primary-button" disabled={!selected || busy} onClick={savePreset}>Save crop as default preset</button>
-            <span>Future labels can reuse this crop automatically.</span>
+            <button className="primary-button" disabled={!selected || busy} onClick={savePreset}>{editingPresetId ? "Save preset changes" : "Save crop as default preset"}</button>
+            {editingPresetId && <button className="icon-button" disabled={busy} onClick={() => { setEditingPresetId(null); setPresetName(DEFAULT_PRESET_NAME); }}>Cancel edit</button>}
+            <span>{editingPresetId ? "Changes update the selected preset." : "New presets become the default automatically."}</span>
           </div>
         </section>
       </div>
