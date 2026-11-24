@@ -71,7 +71,7 @@ export default async function Home() {
           ...shipments.flatMap((s) => (shipmentEvents.data ?? []).filter((e) => e.shipment_id === s.id).map((e) => ({ id: e.id, kind: "shipment", label: e.event_type, timestamp: e.event_timestamp, source: e.source ?? "shipment_events" }))),
           ...returns.flatMap((r) => (returnEvents.data ?? []).filter((e) => e.return_id === r.id).map((e) => ({ id: e.id, kind: "return", label: e.event_type, timestamp: e.event_timestamp, source: "return_events" }))),
           ...returns.map((r) => ({ id: `return-${r.id}`, kind: "return", label: `Return ${r.status ?? "created"}`, timestamp: r.updated_at ?? r.created_at, source: r.source ?? "returns" })),
-        ].filter((e) => e.timestamp).sort((a, b) => new Date(b.timestamp!).getTime() - new Date(a.timestamp!).getTime()).slice(0, 40);
+        ].filter((e) => e.timestamp).map((e) => ({ ...e, timestamp: e.timestamp! })).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 40);
         const searchText = [
           o.flipkart_order_id,
           ...items.flatMap((i) => [i.flipkart_order_item_id, i.sku, i.fsn, i.cancellation_group_id]),
