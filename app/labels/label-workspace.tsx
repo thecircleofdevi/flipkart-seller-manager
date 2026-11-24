@@ -65,6 +65,7 @@ export default function LabelWorkspace() {
   const [unit, setUnit] = useState<"in" | "cm">("in");
   const [previewMode, setPreviewMode] = useState<"blended" | "page" | "odd-even">("blended");
   const [previewPage, setPreviewPage] = useState(1);
+  const [batchReport, setBatchReport] = useState<null | { pages: number; files: number; valid: number; warnings: string[]; checkedAt: string }>(null);
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
 
@@ -466,6 +467,48 @@ export default function LabelWorkspace() {
     }
   }
 
+  async function validateBatch() {
+    if (!items.length) return;
+    setBusy(true);
+    setMessage("Checking every label page against the current crop...");
+    try {
+      let pages = 0;
+      let valid = 0;
+      const warnings: string[] = [];
+      const reference = selected ? { width: selected.pageWidth, height: selected.pageHeight } : null;
+
+      for (const item of items) {
+        const pdf = await PDFDocument.load(await item.file.arrayBuffer());
+        pdf.getPages().forEach((page, pageIndex) => {
+          pages++;
+          const size = page.getSize();
+          const fits = crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
+            crop.x + crop.width <= size.width + 0.5 && crop.y + crop.height <= size.height + 0.5;
+          if (fits) valid++;
+          else warnings.push(`${item.file.name} · page ${pageIndex + 1}: crop extends outside ${Math.round(size.width)}×${Math.round(size.height)} pt page.`);
+
+          if (reference) {
+            const widthDelta = Math.abs(size.width - reference.width) / Math.max(reference.width, 1);
+            const heightDelta = Math.abs(size.height - reference.height) / Math.max(reference.height, 1);
+            if (widthDelta > 0.02 || heightDelta > 0.02) {
+              warnings.push(`${item.file.name} · page ${pageIndex + 1}: page size differs from the selected reference page.`);
+            }
+          }
+        });
+      }
+
+      const uniqueWarnings = [...new Set(warnings)];
+      setBatchReport({ pages, files: items.length, valid, warnings: uniqueWarnings, checkedAt: new Date().toLocaleTimeString() });
+      setMessage(uniqueWarnings.length
+        ? `Batch check complete: ${valid}/${pages} pages fit the crop, with ${uniqueWarnings.length} warning(s).`
+        : `Batch check passed: ${pages} pages across ${items.length} file(s) are compatible with the current crop.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to validate the label batch.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function processCurrent() {
     if (!selected) return;
     setBusy(true);
@@ -544,7 +587,7 @@ export default function LabelWorkspace() {
             </div>
             <div className="label-actions">
               <button className="icon-button" disabled={!selected || busy} onClick={processCurrent}>Download current</button>
-              <button className="icon-button" disabled={!items.length || busy} onClick={printAll}>Print 4×6</button>
+              <button className="icon-button" disabled={!items.length || busy} onClick={printAll}>Print 4×6</button>\n              <button className="icon-button" disabled={!items.length || busy} onClick={validateBatch}>Check batch</button>
               <button className="primary-button" disabled={!items.length || busy} onClick={processAll}>Process all & download</button>
             </div>
           </div>
@@ -634,6 +677,19 @@ export default function LabelWorkspace() {
               <label className="primary-button label-upload">Choose PDFs<input type="file" accept="application/pdf,.pdf" multiple onChange={(e) => loadFiles(e.target.files)} /></label>
             </div>
           )}
+
+          {batchReport && <div className="batch-report">
+            <div className="batch-report-head">
+              <div><strong>Batch validation</strong><span>{batchReport.files} file{batchReport.files === 1 ? "" : "s"} · {batchReport.pages} label pages · checked {batchReport.checkedAt}</span></div>
+              <div className={"batch-status " + (batchReport.warnings.length ? "warn" : "ok")}>{batchReport.warnings.length ? `${batchReport.warnings.length} warning${batchReport.warnings.length === 1 ? "" : "s"}` : "Ready to print"}</div>
+            </div>
+            <div className="batch-report-stats">
+              <div><strong>{batchReport.valid}/{batchReport.pages}</strong><span>pages fit crop</span></div>
+              <div><strong>4×6</strong><span>output size</span></div>
+              <div><strong>{batchReport.warnings.length}</strong><span>warnings</span></div>
+            </div>
+            {batchReport.warnings.length > 0 && <div className="batch-warning-list">{batchReport.warnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}{batchReport.warnings.length > 8 && <div>+ {batchReport.warnings.length - 8} more warnings</div>}</div>}
+          </div>
 
           {selected && <div className="crop-options">
             <div className="crop-options-head">
