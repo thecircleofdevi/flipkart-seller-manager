@@ -449,7 +449,7 @@ export default function LabelWorkspace() {
             placeholder="Shipment ID, Shipment ID, ..."
             disabled={busy}
           />
-          <button className="primary-button" disabled={busy} onClick={loadShipmentLabels}>Fetch labels</button>
+          <button className="primary-button" disabled={busy} onClick={() => loadShipmentLabels()}>Fetch labels</button>
         </div>
       </div>
 
