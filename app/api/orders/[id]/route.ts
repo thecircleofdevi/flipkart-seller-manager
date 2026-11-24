@@ -31,7 +31,7 @@ export async function GET(
   const itemIds = items.map((i) => i.id);
   const shipmentIds = shipments.map((s) => s.id);
 
-  const [shipmentEventsResult, returnByItemsResult, returnByShipmentsResult] = await Promise.all([
+  const [shipmentEventsResult, returnByItemsResult, returnByShipmentsResult, documentJobsResult] = await Promise.all([
     shipmentIds.length
       ? supabase.from("shipment_events").select("id,shipment_id,event_type,event_timestamp,source").in("shipment_id", shipmentIds).order("event_timestamp", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
@@ -41,9 +41,12 @@ export async function GET(
     shipmentIds.length
       ? supabase.from("returns").select("id,flipkart_return_id,order_item_id,shipment_id,status,return_reason,source,created_at,updated_at").in("shipment_id", shipmentIds).order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
+    shipmentIds.length
+      ? supabase.from("document_jobs").select("id,shipment_id,type,status,shipment_ids,filename,content_type,error,created_at,completed_at").eq("user_id", user.id).in("shipment_id", shipmentIds).order("created_at", { ascending: false }).limit(100)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
-  const firstError = [shipmentEventsResult, returnByItemsResult, returnByShipmentsResult].find((r) => r.error)?.error;
+  const firstError = [shipmentEventsResult, returnByItemsResult, returnByShipmentsResult, documentJobsResult].find((r) => r.error)?.error;
   if (firstError) return NextResponse.json({ error: firstError.message }, { status: 500 });
 
   const returns = [...new Map([
@@ -75,6 +78,7 @@ export async function GET(
     shipments: shipments.map((s) => ({
       ...s,
       events: (shipmentEventsResult.data ?? []).filter((e) => e.shipment_id === s.id).slice(0, 50),
+      documents: (documentJobsResult.data ?? []).filter((job) => job.shipment_id === s.id).slice(0, 25),
     })),
     returns: returns.map((r) => ({
       ...r,
