@@ -115,6 +115,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, error: "type must be labels, invoices, or forms." }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown document error.";
+    if (jobId) {
+      await supabaseAdmin.from("document_jobs").update({ status: "failed", error: message, completed_at: new Date().toISOString() }).eq("id", jobId);
+    }
     const status = message === "Unauthorized." ? 401 : /required|maximum|Invalid shipment|not present|must be/.test(message) ? 400 : 502;
     return NextResponse.json({ ok: false, error: message }, { status });
   }
