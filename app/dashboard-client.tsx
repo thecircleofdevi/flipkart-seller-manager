@@ -62,7 +62,11 @@ export default function DashboardClient(props: Props) {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncStage, setSyncStage] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ status: string; elapsedSeconds: number; estimatedTotalSeconds: number; recordsWritten: number } | null>(null);
-  function openShipmentLabels(shipmentId: string) {\n    window.location.href = "/labels?shipmentIds=" + encodeURIComponent(shipmentId);\n  }\n\n  const filteredShipments = useMemo(() => {
+  function openShipmentLabels(shipmentId: string) {
+    window.location.href = "/labels?shipmentIds=" + encodeURIComponent(shipmentId);
+  }
+
+  const filteredShipments = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return props.shipments;
     return props.shipments.filter((s) => [s.flipkart_shipment_id, s.state, s.tracking_id, s.courier_name].some((v) => v?.toLowerCase().includes(q)));
@@ -421,8 +425,11 @@ export default function DashboardClient(props: Props) {
       setSyncMessage("Flipkart returned no allowed self-ship vendors for this location.");
       return;
     }
-    const options = vendors.map((v: { vendor_name?: string; display_name?: string; vendor_code?: string }) => `${v.vendor_code ?? ""} | ${v.display_name ?? v.vendor_name ?? "Vendor"}`).filter(Boolean).join("\n");
-    const selectedCode = window.prompt(`Select an allowed delivery partner by entering its vendor code:\n\n${options}`, vendors[0]?.vendor_code ?? "");
+    const options = vendors.map((v: { vendor_name?: string; display_name?: string; vendor_code?: string }) => `${v.vendor_code ?? ""} | ${v.display_name ?? v.vendor_name ?? "Vendor"}`).filter(Boolean).join("
+");
+    const selectedCode = window.prompt(`Select an allowed delivery partner by entering its vendor code:
+
+${options}`, vendors[0]?.vendor_code ?? "");
     if (selectedCode === null) return;
     const selected = vendors.find((v: { vendor_code?: string }) => v.vendor_code === selectedCode.trim());
     if (!selected?.vendor_code) {
@@ -514,8 +521,11 @@ export default function DashboardClient(props: Props) {
       const counts = Array.isArray(result.data) ? result.data : result.data && typeof result.data === "object" ? [result.data] : [];
       const usable = counts.filter((x: { vendorGroupCode?: string; count?: number }) => x.vendorGroupCode && Number(x.count ?? 0) > 0);
       if (!usable.length) throw new Error("No shipments are currently ready for handover.");
-      const options = usable.map((x: { vendorGroupCode: string; count: number }) => `${x.vendorGroupCode} | ${x.count} shipment(s)`).join("\n");
-      const vendorGroupCode = window.prompt(`Choose the vendor group for the manifest:\n\n${options}`, usable[0].vendorGroupCode);
+      const options = usable.map((x: { vendorGroupCode: string; count: number }) => `${x.vendorGroupCode} | ${x.count} shipment(s)`).join("
+");
+      const vendorGroupCode = window.prompt(`Choose the vendor group for the manifest:
+
+${options}`, usable[0].vendorGroupCode);
       if (vendorGroupCode === null) return;
       const selected = usable.find((x: { vendorGroupCode: string }) => x.vendorGroupCode === vendorGroupCode.trim());
       if (!selected) throw new Error("Invalid vendor group.");
