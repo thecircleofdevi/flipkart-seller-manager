@@ -195,8 +195,9 @@ export default function LabelWorkspace() {
   }
 
 
-  async function loadShipmentLabels() {
-    const shipmentIds = [...new Set(shipmentIdsInput.split(",").map((id) => id.trim()).filter(Boolean))];
+  async function loadShipmentLabels(input?: string) {
+    const raw = input ?? shipmentIdsInput;
+    const shipmentIds = [...new Set(raw.split(",").map((id) => id.trim()).filter(Boolean))];
     if (!shipmentIds.length) {
       setMessage("Enter at least one Flipkart shipment ID.");
       return;
@@ -237,6 +238,14 @@ export default function LabelWorkspace() {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shipmentIds = params.get("shipmentIds");
+    if (!shipmentIds) return;
+    setShipmentIdsInput(shipmentIds);
+    void loadShipmentLabels(shipmentIds);
+  }, []);
 
   async function loadFiles(fileList: FileList | null) {
     if (!fileList) return;
