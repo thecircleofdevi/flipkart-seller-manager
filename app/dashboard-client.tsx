@@ -88,6 +88,24 @@ export default function DashboardClient(props: Props) {
     });
   }, [query, props.shipments, shipmentView]);
 
+  const shipmentTabCounts = useMemo(() => {
+    const now = Date.now();
+    const counts = { all: props.shipments.length, needs_action: 0, packing: 0, ready: 0, shipped: 0, delivered: 0, hold: 0, cancelled: 0, delayed: 0 };
+    for (const s of props.shipments) {
+      const state = (s.state ?? "").toUpperCase();
+      const overdue = Boolean(s.dispatch_by && new Date(s.dispatch_by).getTime() < now && !["DELIVERED", "CANCELLED"].includes(state));
+      if (s.hold === true || ["APPROVED", "PACKED", "PACKING_IN_PROGRESS", "READY_TO_DISPATCH"].includes(state) || overdue) counts.needs_action++;
+      if (["PACKING_IN_PROGRESS", "PACKED"].includes(state)) counts.packing++;
+      if (state === "READY_TO_DISPATCH") counts.ready++;
+      if (state === "SHIPPED") counts.shipped++;
+      if (state === "DELIVERED") counts.delivered++;
+      if (s.hold === true) counts.hold++;
+      if (state === "CANCELLED") counts.cancelled++;
+      if (overdue) counts.delayed++;
+    }
+    return counts;
+  }, [props.shipments]);
+
   const title = nav.find((item) => item.id === active)?.label ?? "Overview";
   const filteredOrders = remoteOrders;
   const filteredListings = useMemo(() => { const q = query.trim().toLowerCase(); if (!q) return props.listings; return props.listings.filter((l) => [l.sku, l.fsn, l.status, l.procurement_type, l.shipping_provider].some((v) => v?.toLowerCase().includes(q))); }, [query, props.listings]);
@@ -752,7 +770,7 @@ export default function DashboardClient(props: Props) {
                   ["hold", "On Hold"],
                   ["cancelled", "Cancelled"],
                   ["delayed", "Delayed"],
-                ] as const).map(([id, label]) => <button key={id} className={"text-button" + (shipmentView === id ? " active-tab" : "")} onClick={() => setShipmentView(id)} role="tab" aria-selected={shipmentView === id}>{label}</button>)}
+                ] as const).map(([id, label]) => <button key={id} className={"text-button" + (shipmentView === id ? " active-tab" : "")} onClick={() => setShipmentView(id)} role="tab" aria-selected={shipmentView === id}>{label} <span style={{opacity:.65}}>{shipmentTabCounts[id]}</span></button>)}
               </div>
               <div className="table-toolbar shipment-toolbar">
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
