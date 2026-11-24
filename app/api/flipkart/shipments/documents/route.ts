@@ -52,6 +52,23 @@ export async function GET(request: Request) {
     await assertShipmentOwnership(userId, shipmentIds);
 
     const encodedIds = encodeURIComponent(shipmentIds.join(","));
+    const jobType = type === "labels" ? "label" : type === "invoices" ? "invoice" : type === "forms" ? "form" : null;
+    if (!jobType) {
+      return NextResponse.json({ ok: false, error: "type must be labels, invoices, or forms." }, { status: 400 });
+    }
+
+    const { data: job, error: jobError } = await supabaseAdmin
+      .from("document_jobs")
+      .insert({
+        user_id: userId,
+        shipment_ids: shipmentIds,
+        type: jobType,
+        status: "processing",
+        metadata: { requested_from: "shipment_documents_api" },
+      })
+      .select("id")
+      .single();
+    if (jobError) throw jobError;
 
     if (type === "labels" || type === "invoices") {
       const path = type === "labels"
@@ -59,20 +76,36 @@ export async function GET(request: Request) {
         : `/sellers/v3/shipments/${encodedIds}/invoices`;
       const result = await flipkartBinaryRequest(path);
 
+      const filename = filenameFromDisposition(result.contentDisposition, `flipkart-${type}.pdf`);
+      await supabaseAdmin.from("document_jobs").update({
+        status: result.status >= 200 && result.status < 300 ? "completed" : "failed",
+        filename,
+        content_type: result.contentType?.split(";")[0] || "application/pdf",
+        error: result.status >= 200 && result.status < 300 ? null : `Flipkart returned HTTP ${result.status}`,
+        completed_at: new Date().toISOString(),
+      }).eq("id", job.id);
+
       return new NextResponse(result.data, {
         status: result.status,
         headers: {
           "Content-Type": result.contentType?.split(";")[0] || "application/pdf",
-          "Content-Disposition": `attachment; filename="${filenameFromDisposition(result.contentDisposition, `flipkart-${type}.pdf`)}"`,
+          "Content-Disposition": `attachment; filename="${filename}"`,
           "Cache-Control": "private, no-store",
+          "X-Document-Job-Id": job.id,
         },
       });
     }
 
     if (type === "forms") {
       const result = await flipkartRequest<unknown>(`/sellers/v3/shipments/${encodedIds}/forms`);
-      return NextResponse.json(result.data, {
-        headers: { "Cache-Control": "private, no-store" },
+      await supabaseAdmin.from("document_jobs").update({
+        status: "completed",
+        content_type: "application/json",
+        metadata: { response: result.data },
+        completed_at: new Date().toISOString(),
+      }).eq("id", job.id);
+      return NextResponse.json({ ok: true, jobId: job.id, shipmentIds, data: result.data }, {
+        headers: { "Cache-Control": "private, no-store", "X-Document-Job-Id": job.id },
       });
     }
 
