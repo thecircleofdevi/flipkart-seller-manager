@@ -64,7 +64,7 @@ export default async function Home() {
         const itemIds = new Set(items.map((i) => i.id));
         const shipmentIds = new Set(shipments.map((s) => s.id));
         const returns = (orderReturns.data ?? []).filter((r) => (r.order_item_id ? itemIds.has(r.order_item_id) : false) || (r.shipment_id ? shipmentIds.has(r.shipment_id) : false));
-        const cancellations = items.filter((i) => Boolean(i.cancellation_group_id) || i.status?.toLowerCase().includes("cancel"));
+        const cancellations = items.filter((i) => i.status?.toLowerCase().includes("cancel"));
         const timeline = [
           ...(o.order_date ? [{ id: `order-${o.id}`, kind: "order", label: "Order created", timestamp: o.order_date, source: "orders" }] : []),
           ...cancellations.map((i) => ({ id: `cancel-${i.id}`, kind: "cancellation", label: `Cancellation: ${i.status ?? "cancelled"}`, timestamp: i.updated_at, source: "order_items" })),
