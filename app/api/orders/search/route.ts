@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     ]);
     const returnError = returnItems.error ?? returnShipments.error;
     if (returnError) return NextResponse.json({ error: returnError.message }, { status: 500 });
-    returnOrderIds = [...(returnItems.data ?? []).map((r) => r.order_id), ...(returnShipments.data ?? []).map((r) => r.order_id)];
+    returnOrderIds = [...(returnItems.data ?? []).map((r) => r.order_id), ...(returnShipments.data ?? []).map((r) => r.order_id)].filter((id): id is string => Boolean(id));
   }
 
   const ids = [...new Set([
