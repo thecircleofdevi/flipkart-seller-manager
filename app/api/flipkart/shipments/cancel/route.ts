@@ -18,10 +18,12 @@ export async function POST(request: Request) {
     if (!REASONS.has(reason)) throw new Error("reason must be cannot_procure_item, not_enough_inventory, or b2b_order.");
 
     const { data: owned, error } = await supabaseAdmin.from("shipments")
-      .select("id,flipkart_shipment_id,location_id,order_id,locations:location_id(flipkart_location_id)")
+      .select("id,flipkart_shipment_id,location_id,order_id,state,locations:location_id(flipkart_location_id)")
       .eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
+    const cancellableStates = new Set(["APPROVED", "PACKED", "PACKING_IN_PROGRESS", "READY_TO_DISPATCH"]);
+    if ((owned ?? []).some((row) => !cancellableStates.has(String(row.state ?? "").toUpperCase()))) throw new Error("Only APPROVED, PACKED, PACKING_IN_PROGRESS, or READY_TO_DISPATCH shipments can be cancelled.");
 
     let cancellationGroupIds: string[] = Array.isArray(body?.cancellationGroupIds) && body.cancellationGroupIds.length
       ? parseStringList(body.cancellationGroupIds, "cancellationGroupIds", 100)
