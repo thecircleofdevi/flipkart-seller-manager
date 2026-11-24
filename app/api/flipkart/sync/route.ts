@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { flipkartRequest } from "@/lib/flipkart/client";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -84,6 +85,10 @@ const states: Record<FilterType, readonly string[]> = {
   ],
   cancelled: ["CANCELLED"],
 };
+
+function getPayloadHash(payload: unknown) {
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
 
 function getRequiredEnv(name: string) {
   const value = process.env[name];
@@ -359,6 +364,7 @@ async function upsertShipmentGraph(
           source_type: "shipment_filter",
           external_id: shipment.shipmentId,
           payload: shipment,
+          payload_hash: getPayloadHash(shipment),
         },
         { onConflict: "user_id,source_type,external_id,payload_hash" },
       );
