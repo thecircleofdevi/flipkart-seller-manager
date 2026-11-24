@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     if (action === "deliveryAttempt" && !datePattern.test(String(body?.newDeliveryDate ?? ""))) throw new Error("newDeliveryDate must use yyyy-MM-dd format.");
     const { data: shipments, error } = await supabaseAdmin
       .from("shipments")
-      .select("id,flipkart_shipment_id,location_id,shipment_type")
+      .select("id,flipkart_shipment_id,location_id,shipment_type,state")
       .eq("user_id", userId)
       .in("flipkart_shipment_id", shipmentIds);
     if (error) throw error;
