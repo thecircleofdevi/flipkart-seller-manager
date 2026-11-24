@@ -49,6 +49,7 @@ export default function DashboardClient(props: Props) {
   const [query, setQuery] = useState("");
   const [commandOpen, setCommandOpen] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+  const [selectedShipmentIds, setSelectedShipmentIds] = useState<Set<string>>(new Set());
   const [loadedOrder, setLoadedOrder] = useState<Props["orderDetails"][number] | null>(null);
   const [orderLoading, setOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
@@ -299,6 +300,32 @@ export default function DashboardClient(props: Props) {
 
     return () => { cancelled = true; };
   }, [syncing, autoSyncing]);
+
+  function toggleShipmentSelection(shipmentId: string) {
+    setSelectedShipmentIds((current) => {
+      const next = new Set(current);
+      if (next.has(shipmentId)) next.delete(shipmentId);
+      else next.add(shipmentId);
+      return next;
+    });
+  }
+
+  function toggleAllVisibleShipments() {
+    const eligible = filteredShipments.filter((s) => Boolean(s.flipkart_shipment_id));
+    setSelectedShipmentIds((current) => {
+      const next = new Set(current);
+      const allSelected = eligible.length > 0 && eligible.every((s) => next.has(s.id));
+      eligible.forEach((s) => { if (allSelected) next.delete(s.id); else next.add(s.id); });
+      return next;
+    });
+  }
+
+  function openSelectedLabels() {
+    const shipmentIds = filteredShipments.filter((s) => selectedShipmentIds.has(s.id) && s.flipkart_shipment_id).map((s) => s.flipkart_shipment_id as string);
+    if (!shipmentIds.length) { setSyncMessage("Select at least one shipment with a Flipkart shipment ID."); return; }
+    if (shipmentIds.length > 100) { setSyncMessage("Label generation supports up to 100 shipments per batch."); return; }
+    window.location.href = "/labels?shipmentIds=" + encodeURIComponent([...new Set(shipmentIds)].join(","));
+  }
 
   async function downloadShipmentDocument(type: "labels" | "invoices" | "forms", shipmentId: string) {
     try {
@@ -682,8 +709,45 @@ export default function DashboardClient(props: Props) {
         {active !== "overview" && (
           <section className="workspace-view">
             <div className="view-hero"><div><span className="eyebrow">Workspace</span><h2>{title}</h2><p>Designed as a focused command surface. Search, inspect, then act without losing context.</p></div><div className="view-count">{active === "shipments" ? props.shipments.length : active === "returns" ? props.returns.length : active === "sync" ? props.syncRows.length : active === "listings" ? props.metrics.find((m) => m.label === "Listings")?.value ?? 0 : "—"}<span>records</span></div></div>
-            {active === "shipments" && <div className="table-card"><div className="table-toolbar"><span>Fulfilment queue</span><span>{filteredShipments.length} visible</span></div>{filteredShipments.length ? filteredShipments.map((s) => <div className="table-row" key={s.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div><span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span><span className="row-date">{date(s.dispatch_by)}</span><div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>{s.state === "READY_TO_DISPATCH" && <button className="text-button" onClick={downloadHandoverManifest}>Manifest</button>}{s.flipkart_shipment_id && <><button className="text-button" onClick={() => downloadShipmentDocument("labels", s.flipkart_shipment_id!)}>Label</button><button className="text-button" onClick={() => downloadShipmentDocument("invoices", s.flipkart_shipment_id!)}>Invoice</button><button className="text-button" onClick={() => downloadShipmentDocument("forms", s.flipkart_shipment_id!)}>Forms</button>{s.state === "PACKED" && <button className="text-button" onClick={() => dispatchShipment(s.flipkart_shipment_id!)}>Ready</button>}{["APPROVED","PACKED","PACKING_IN_PROGRESS","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => cancelShipment(s.flipkart_shipment_id!)}>Cancel</button>}{s.shipment_type === "SELF" && ["APPROVED","PACKED","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => selfShipDispatch(s.flipkart_shipment_id!)}>Self dispatch</button>}{s.shipment_type === "SELF" && s.state === "SHIPPED" && <><button className="text-button" onClick={() => selfShipDelivery("delivery", s.flipkart_shipment_id!)}>Deliver</button><button className="text-button" onClick={() => selfShipDelivery("deliveryAttempt", s.flipkart_shipment_id!)}>Attempt</button></>}</>}</div></div>) : <div className="empty big">No shipments match your search.</div>}</div>}
-            {active === "returns" && <><div className="table-card">{props.returns.length ? props.returns.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className="status-dot orange"/><div><strong>{r.status ?? "Return"}</strong><small>{r.flipkart_return_id ?? "Return ID pending"} · {r.return_reason ?? "Reason not supplied"}</small></div></div><span className="badge">{date(r.created_at)}</span><div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap"}}>{r.flipkart_return_id && r.status === "CREATED" && <><button className="text-button" onClick={() => returnAction("approve", r.flipkart_return_id!)}>Approve</button><button className="text-button" onClick={() => returnAction("reject", r.flipkart_return_id!)}>Reject</button></>}{r.flipkart_return_id && r.status === "APPROVED" && <button className="text-button" onClick={() => returnAction("pickup", r.flipkart_return_id!)}>Picked up</button>}{r.flipkart_return_id && r.status === "PICKUP_ATTEMPTED" && <button className="text-button" onClick={() => returnAction("pickupAttempt", r.flipkart_return_id!)}>Pickup attempt</button>}{r.flipkart_return_id && r.status === "PICKED_UP" && <button className="text-button" onClick={() => returnAction("complete", r.flipkart_return_id!)}>Complete</button>}</div></div>) : <div className="empty big">No open returns. Your return desk is clear.</div>}</div></>}
+            {active === "shipments" && <div className="table-card">
+              <div className="table-toolbar shipment-toolbar">
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <input type="checkbox" aria-label="Select all visible shipments"
+                    checked={filteredShipments.filter((s) => s.flipkart_shipment_id).length > 0 && filteredShipments.filter((s) => s.flipkart_shipment_id).every((s) => selectedShipmentIds.has(s.id))}
+                    onChange={toggleAllVisibleShipments}
+                  />
+                  <span>Fulfilment queue</span>
+                  <span>{filteredShipments.length} visible</span>
+                  {selectedShipmentIds.size > 0 && <span className="selection-count">{selectedShipmentIds.size} selected</span>}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  {selectedShipmentIds.size > 0 && <button className="primary-button" onClick={openSelectedLabels}>Generate labels</button>}
+                  <button className="text-button" onClick={() => setActive("labels")}>Label Workspace</button>
+                </div>
+              </div>
+              {filteredShipments.length ? filteredShipments.map((s) => <div className="table-row shipment-table-row" key={s.id}>
+                <input type="checkbox" aria-label="Select shipment" checked={selectedShipmentIds.has(s.id)} disabled={!s.flipkart_shipment_id}
+                  onChange={() => toggleShipmentSelection(s.id)} onClick={(e) => e.stopPropagation()} />
+                <div className="row-main"><span className="status-dot orange"/><div><strong>{s.flipkart_shipment_id ?? "Shipment"}</strong><small>{s.tracking_id ?? "Tracking pending"} · {s.courier_name ?? "Courier pending"}</small></div></div>
+                <span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span>
+                <span className="row-date">{date(s.dispatch_by)}</span>
+                <div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                  {s.state === "READY_TO_DISPATCH" && <button className="text-button" onClick={downloadHandoverManifest}>Manifest</button>}
+                  {s.flipkart_shipment_id && <>
+                    <button className="text-button" onClick={() => downloadShipmentDocument("labels", s.flipkart_shipment_id!)}>Label</button>
+                    <button className="text-button" onClick={() => downloadShipmentDocument("invoices", s.flipkart_shipment_id!)}>Invoice</button>
+                    <button className="text-button" onClick={() => downloadShipmentDocument("forms", s.flipkart_shipment_id!)}>Forms</button>
+                    {s.state === "PACKED" && <button className="text-button" onClick={() => dispatchShipment(s.flipkart_shipment_id!)}>Ready</button>}
+                    {["APPROVED","PACKED","PACKING_IN_PROGRESS","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => cancelShipment(s.flipkart_shipment_id!)}>Cancel</button>}
+                    {s.shipment_type === "SELF" && ["APPROVED","PACKED","READY_TO_DISPATCH"].includes(s.state ?? "") && <button className="text-button" onClick={() => selfShipDispatch(s.flipkart_shipment_id!)}>Self dispatch</button>}
+                    {s.shipment_type === "SELF" && s.state === "SHIPPED" && <>
+                      <button className="text-button" onClick={() => selfShipDelivery("delivery", s.flipkart_shipment_id!)}>Deliver</button>
+                      <button className="text-button" onClick={() => selfShipDelivery("deliveryAttempt", s.flipkart_shipment_id!)}>Attempt</button>
+                    </>}
+                  </>}
+                </div>
+              </div>) : <div className="empty big">No shipments match your search.</div>}
+            </div>}
             {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "shipments" ? "Syncing fulfilment" : "Syncing catalogue"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing)} onClick={() => runSync("shipments")}>{syncing === "shipments" ? "Syncing fulfilment..." : "Sync fulfilment"}</button><button className="text-button" disabled={Boolean(syncing) || fullBackfillRunning} onClick={runFullShipmentBackfill}>{fullBackfillRunning ? "Backfilling history..." : "Full historical backfill"}</button><button className="text-button" disabled={Boolean(syncing)} onClick={() => runSync("listings")}>{syncing === "listings" ? "Syncing catalogue..." : "Sync catalogue"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
             {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><div style={{display:"flex",alignItems:"center",gap:8}}><span>{remoteOrderTotal} records · page {orderPage} / {Math.max(1, Math.ceil(remoteOrderTotal / pageSize))}{orderSearchLoading ? " · loading…" : ""}</span><button className="text-button" disabled={orderPage <= 1 || orderSearchLoading} onClick={() => setOrderPage((p) => Math.max(1, p - 1))}>Previous</button><button className="text-button" disabled={orderPage >= Math.max(1, Math.ceil(remoteOrderTotal / pageSize)) || orderSearchLoading} onClick={() => setOrderPage((p) => p + 1)}>Next</button></div></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
             {active === "labels" && <div className="empty-state"><div className="empty-orb">▣</div><h3>Label Workspace</h3><p>Open the dedicated 4×6 thermal label workspace to crop, save presets, process multiple PDFs and prepare a print-ready batch.</p><a className="primary-button" href="/labels">Open Label Workspace</a></div>}
