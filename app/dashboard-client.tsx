@@ -62,7 +62,45 @@ export default function DashboardClient(props: Props) {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncStage, setSyncStage] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ status: string; elapsedSeconds: number; estimatedTotalSeconds: number; recordsWritten: number } | null>(null);
+  const [documentAction, setDocumentAction] = useState<string | null>(null);
 
+  async function openShipmentLabels(shipmentId: string) {
+    window.location.href = "/labels?shipmentIds=" + encodeURIComponent(shipmentId);
+  }
+
+  async function downloadShipmentDocument(shipmentId: string, type: "invoices" | "forms") {
+    const key = type + "-" + shipmentId;
+    setDocumentAction(key);
+    try {
+      const response = await fetch("/api/flipkart/shipments/documents?type=" + type + "&shipmentIds=" + encodeURIComponent(shipmentId));
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Unable to fetch " + type + ".");
+      }
+      if (type === "forms") {
+        const body = await response.json();
+        const blob = new Blob([JSON.stringify(body.data ?? body, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "flipkart-forms-" + shipmentId + ".json";
+        a.click();
+        URL.revokeObjectURL(url);
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "flipkart-invoice-" + shipmentId + ".pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setOrderError(error instanceof Error ? error.message : "Unable to fetch shipment document.");
+    } finally {
+      setDocumentAction(null);
+    }
+  }
   const filteredShipments = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return props.shipments;
@@ -782,9 +820,9 @@ export default function DashboardClient(props: Props) {
               <div className="drawer-section-head"><div className="drawer-label">Fulfilment</div><span>{order.shipments.length}</span></div>
               {order.shipments.length ? order.shipments.map((s) => <div className="shipment-cockpit" key={s.id}>
                 <div className="shipment-top"><div><strong>{s.flipkart_shipment_id}</strong><small>{s.state?.replaceAll("_"," ") ?? "State pending"} · {s.courier_name ?? "Courier pending"}</small></div><span className={s.hold ? "badge warn" : "badge good"}>{s.hold ? "On hold" : "Moving"}</span></div>
-                <div className="shipment-meta"><span>Dispatch by <b>{date(s.dispatch_by)}</b></span><span>{s.tracking_id ?? "Tracking pending"}</span></div>
+                <div className="shipment-meta"><span>Dispatch by <b>{date(s.dispatch_by)}</b></span><span>{s.tracking_id ?? "Tracking pending"}</span></div><div className="shipment-actions"><button className="text-button" onClick={() => openShipmentLabels(s.flipkart_shipment_id)}>Label</button><button className="text-button" disabled={documentAction === "invoices-" + s.flipkart_shipment_id} onClick={() => downloadShipmentDocument(s.flipkart_shipment_id, "invoices")}>{documentAction === "invoices-" + s.flipkart_shipment_id ? "Downloading…" : "Invoice"}</button><button className="text-button" disabled={documentAction === "forms-" + s.flipkart_shipment_id} onClick={() => downloadShipmentDocument(s.flipkart_shipment_id, "forms")}>{documentAction === "forms-" + s.flipkart_shipment_id ? "Fetching…" : "Forms"}</button></div>
                 {s.events.length ? <div className="timeline">{s.events.map((e) => <div className="timeline-row" key={e.id}><i/><div><strong>{e.event_type.replaceAll("_"," ")}</strong><small>{date(e.event_timestamp)}{e.source ? " · " + e.source : ""}</small></div></div>)}</div> : <div className="drawer-empty">No shipment events captured yet.</div>}
-                {s.documents.length ? <div className="document-history"><div className="drawer-label">Documents</div>{s.documents.map((doc) => <div className="drawer-item" key={doc.id}><div><strong>{doc.type === "label" ? "Shipping label" : doc.type === "invoice" ? "Invoice" : "Shipment form"}</strong><small>{doc.status} · {date(doc.completed_at ?? doc.created_at)}{doc.filename ? " · " + doc.filename : ""}</small></div><span className={"badge " + (doc.status === "completed" ? "good" : doc.status === "failed" ? "" : "warn")}>{doc.status}</span></div>)}</div> : <div className="drawer-empty">No shipment documents generated yet.</div>}
+                {s.documents.length ? <div className="document-history"><div className="drawer-label">Documents</div>{s.documents.map((doc) => <div className="drawer-item" key={doc.id}><div><strong>{doc.type === "label" ? "Shipping label" : doc.type === "invoice" ? "Invoice" : "Shipment form"}</strong><small>{doc.status} · {date(doc.completed_at ?? doc.created_at)}{doc.filename ? " · " + doc.filename : ""}</small></div><div className="document-row-actions"><span className={"badge " + (doc.status === "completed" ? "good" : doc.status === "failed" ? "" : "warn")}>{doc.status}</span>{doc.status === "completed" && doc.type === "label" && <button className="text-button" onClick={() => openShipmentLabels(s.flipkart_shipment_id)}>Open</button>}{doc.status === "completed" && doc.type === "invoice" && <button className="text-button" onClick={() => downloadShipmentDocument(s.flipkart_shipment_id, "invoices")}>Download</button>}{doc.status === "completed" && doc.type === "form" && <button className="text-button" onClick={() => downloadShipmentDocument(s.flipkart_shipment_id, "forms")}>Fetch</button>}</div></div>)}</div> : <div className="drawer-empty">No shipment documents generated yet.</div>}
               </div>) : <div className="drawer-empty">No shipment is linked to this order yet.</div>}
             </div>
             <div className="drawer-section">
