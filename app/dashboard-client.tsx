@@ -519,6 +519,18 @@ export default function DashboardClient(props: Props) {
     await mutate("/api/flipkart/listings/update-price", { updates: [{ sku, mrp, sellingPrice, currency: "INR" }] }, `Price updated for ${sku}.`);
   }
 
+  async function dispatchSelectedShipments() {
+    const shipmentIds = filteredShipments
+      .filter((s) => selectedShipmentIds.has(s.id) && s.flipkart_shipment_id && s.state === "PACKED")
+      .map((s) => s.flipkart_shipment_id as string);
+    if (!shipmentIds.length) {
+      setSyncMessage("Select at least one PACKED shipment.");
+      return;
+    }
+    if (!window.confirm(`Mark ${shipmentIds.length} packed shipment(s) as Ready to Dispatch?`)) return;
+    await mutate("/api/flipkart/shipments/dispatch", { shipmentIds }, `${shipmentIds.length} shipment(s) sent to Ready to Dispatch.`);
+  }
+
   async function dispatchShipment(shipmentId: string) {
     if (!window.confirm(`Mark shipment ${shipmentId} as Ready to Dispatch?`)) return;
     await mutate("/api/flipkart/shipments/dispatch", { shipmentIds: [shipmentId] }, `Shipment ${shipmentId} marked Ready to Dispatch.`);
@@ -753,7 +765,7 @@ export default function DashboardClient(props: Props) {
                   {selectedShipmentIds.size > 0 && <span className="selection-count">{selectedShipmentIds.size} selected</span>}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                  {selectedShipmentIds.size > 0 && <button className="primary-button" onClick={openSelectedLabels}>Generate labels</button>}
+                  {selectedShipmentIds.size > 0 && <button className="primary-button" onClick={openSelectedLabels}>Generate labels</button>}{selectedShipmentIds.size > 0 && filteredShipments.some((s) => selectedShipmentIds.has(s.id) && s.state === "PACKED") && <button className="text-button" onClick={dispatchSelectedShipments}>Mark Ready</button>}
                   <button className="text-button" onClick={() => setActive("labels")}>Label Workspace</button>
                 </div>
               </div>
