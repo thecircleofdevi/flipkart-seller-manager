@@ -39,8 +39,8 @@ export async function GET(request: NextRequest) {
   const firstError = [orders, orderStatus, items, itemSku, itemFsn, itemCancel, shipments, shipmentTracking, shipmentCourier, returns].find((r) => r.error)?.error;
   if (firstError) return NextResponse.json({ error: firstError.message }, { status: 500 });
 
-  const itemIds = (returns.data ?? []).map((r) => r.order_item_id).filter(Boolean) as string[];
-  const shipmentIds = (returns.data ?? []).map((r) => r.shipment_id).filter(Boolean) as string[];
+  const itemIds = (returns.data ?? []).map((r) => r.order_item_id).filter((id): id is string => Boolean(id));
+  const shipmentIds = (returns.data ?? []).map((r) => r.shipment_id).filter((id): id is string => Boolean(id));
   let returnOrderIds: string[] = [];
   if (itemIds.length || shipmentIds.length) {
     const [returnItems, returnShipments] = await Promise.all([
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
     ...(shipmentTracking.data ?? []).map((r) => r.order_id),
     ...(shipmentCourier.data ?? []).map((r) => r.order_id),
     ...returnOrderIds,
-  ])].filter(Boolean);
+  ])].filter((id): id is string => Boolean(id));
 
   if (!ids.length) return NextResponse.json({ orders: [], total: 0, page, pageSize });
 
