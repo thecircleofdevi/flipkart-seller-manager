@@ -783,7 +783,7 @@ export default function DashboardClient(props: Props) {
                   {selectedShipmentIds.size > 0 && <span className="selection-count">{selectedShipmentIds.size} selected</span>}
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                  {selectedShipmentIds.size > 0 && <button className="primary-button" onClick={openSelectedLabels}>Generate labels</button>}{selectedShipmentIds.size > 0 && filteredShipments.some((s) => selectedShipmentIds.has(s.id) && s.state === "PACKED") && <button className="text-button" onClick={dispatchSelectedShipments}>Mark Ready</button>}
+                  {selectedShipmentIds.size > 0 && <button className="primary-button" onClick={openSelectedLabels}>Generate labels</button>}{selectedShipmentIds.size > 0 && filteredShipments.some((s) => selectedShipmentIds.has(s.id) && s.state === "PACKED") && <button className="text-button" onClick={dispatchSelectedShipments}>Mark Ready</button>}{filteredShipments.some((s) => s.state === "READY_TO_DISPATCH") && <button className="text-button" onClick={downloadHandoverManifest}>Handover manifest</button>}
                   <button className="text-button" onClick={() => setActive("labels")}>Label Workspace</button>
                 </div>
               </div>
@@ -794,7 +794,6 @@ export default function DashboardClient(props: Props) {
                 <span className="badge">{s.state?.replaceAll("_", " ") ?? "Unknown"}</span>
                 <span className="row-date">{date(s.dispatch_by)}</span>
                 <div style={{display:"flex",gap:6,marginLeft:"auto",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                  {s.state === "READY_TO_DISPATCH" && <button className="text-button" onClick={downloadHandoverManifest}>Manifest</button>}
                   {s.flipkart_shipment_id && <>
                     <button className="text-button" onClick={() => downloadShipmentDocument("labels", s.flipkart_shipment_id!)}>Label</button>
                     <button className="text-button" onClick={() => downloadShipmentDocument("invoices", s.flipkart_shipment_id!)}>Invoice</button>
