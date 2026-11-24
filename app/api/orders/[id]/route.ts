@@ -78,7 +78,7 @@ export async function GET(
     shipments: shipments.map((s) => ({
       ...s,
       events: (shipmentEventsResult.data ?? []).filter((e) => e.shipment_id === s.id).slice(0, 50),
-      documents: (documentJobsResult.data ?? []).filter((job) => job.shipment_id === s.id).slice(0, 25),
+      documents: (documentJobsResult.data ?? []).filter((job: any) => job.shipment_id === s.id).slice(0, 25),
     })),
     returns: returns.map((r) => ({
       ...r,
