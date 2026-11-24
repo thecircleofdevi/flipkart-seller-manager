@@ -54,7 +54,18 @@ export async function POST(request: Request) {
 
     const rows = result.data.shipments ?? [];
     const succeeded = rows.filter((row) => String(row.processingStatus ?? "").toUpperCase() === "SUCCESS").map((row) => row.shipmentId).filter((id): id is string => Boolean(id));
-    if (succeeded.length) await supabaseAdmin.from("shipments").update({ state: "CANCELLED" }).eq("user_id", userId).in("flipkart_shipment_id", succeeded);
+    if (succeeded.length) {
+      const { data: shipmentRows, error: shipmentLookupError } = await supabaseAdmin
+        .from("shipments")
+        .select("id,flipkart_shipment_id")
+        .eq("user_id", userId)
+        .in("flipkart_shipment_id", succeeded);
+      if (shipmentLookupError) throw shipmentLookupError;
+      const { error: updateError } = await supabaseAdmin.from("shipments").update({ state: "CANCELLED" }).eq("user_id", userId).in("flipkart_shipment_id", succeeded);
+      if (updateError) throw updateError;
+      const { error: eventError } = await supabaseAdmin.from("shipment_events").insert((shipmentRows ?? []).map((row) => ({ user_id: userId, shipment_id: row.id, event_type: "CANCELLED", event_timestamp: new Date().toISOString(), source: "seller_action", payload: { action: "cancel", flipkart_shipment_id: row.flipkart_shipment_id, reason, cancellationGroupIds } })));
+      if (eventError) throw eventError;
+    }
 
     await logFlipkartMutation({ userId, method: "POST", endpoint: "/sellers/v3/shipments/cancel", requestMeta: { shipmentIds, locationId, reason, cancellationGroupIds }, responseMeta: { succeeded, rows }, statusCode: result.status, startedAt });
     return NextResponse.json({ ok: true, succeeded, results: rows });
