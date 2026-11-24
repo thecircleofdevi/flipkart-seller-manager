@@ -42,7 +42,7 @@ export async function GET(
       ? supabase.from("returns").select("id,flipkart_return_id,order_item_id,shipment_id,status,return_reason,source,created_at,updated_at").in("shipment_id", shipmentIds).order("updated_at", { ascending: false })
       : Promise.resolve({ data: [], error: null }),
     shipmentIds.length
-      ? supabase.from("document_jobs").select("id,shipment_id,type,status,shipment_ids,filename,content_type,error,created_at,completed_at").eq("user_id", user.id).in("shipment_id", shipmentIds).order("created_at", { ascending: false }).limit(100)
+      ? (supabase as any).from("document_jobs").select("id,shipment_id,type,status,shipment_ids,filename,content_type,error,created_at,completed_at").eq("user_id", user.id).in("shipment_id", shipmentIds).order("created_at", { ascending: false }).limit(100)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
