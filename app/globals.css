@@ -156,3 +156,11 @@
   .batch-inspector-row{grid-template-columns:1fr}
   .batch-inspector-row .icon-button{width:100%}
 }
+
+.preset-row{display:block;padding:8px}
+.preset-main{display:flex;align-items:center;gap:9px;width:100%;border:0;background:transparent;text-align:left;padding:2px;color:var(--text);cursor:pointer}
+.preset-main>div{min-width:0;flex:1}
+.preset-actions{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;padding-left:2px}
+.preset-actions button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 7px;font-size:8px;color:var(--muted);cursor:pointer}
+.preset-actions button:hover{background:#f4f4f6;color:var(--text)}
+.preset-actions button:disabled{opacity:.5;cursor:not-allowed}
