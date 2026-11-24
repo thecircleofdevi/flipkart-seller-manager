@@ -407,6 +407,65 @@ export default function LabelWorkspace() {
     }
   }
 
+  async function printAll() {
+    if (!items.length || !selected) return;
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
+    if (!printWindow) {
+      setMessage("Your browser blocked the print window. Allow pop-ups for this site and try again.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("Preparing the 4×6 print-ready PDF...");
+    try {
+      const output = await PDFDocument.create();
+      for (const item of items) {
+        const source = await PDFDocument.load(await item.file.arrayBuffer());
+        for (const sourcePage of source.getPages()) {
+          const embedded = await output.embedPage(sourcePage);
+          const sourceSize = sourcePage.getSize();
+          const cropX = clamp(crop.x, 0, sourceSize.width);
+          const cropYTop = clamp(crop.y, 0, sourceSize.height);
+          const cropW = clamp(crop.width, 1, sourceSize.width - cropX);
+          const cropH = clamp(crop.height, 1, sourceSize.height - cropYTop);
+          const cropYBottom = sourceSize.height - cropYTop - cropH;
+          const page = output.addPage([OUTPUT_W, OUTPUT_H]);
+          page.drawPage(embedded, {
+            x: -cropX * OUTPUT_W / cropW,
+            y: -cropYBottom * OUTPUT_H / cropH,
+            width: sourceSize.width * OUTPUT_W / cropW,
+            height: sourceSize.height * OUTPUT_H / cropH,
+          });
+        }
+      }
+
+      const bytes = await output.save({ useObjectStreams: true });
+      const blobUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
+      printWindow.location.href = blobUrl;
+      setMessage(`Print-ready PDF created: ${items.reduce((total, item) => total + item.pageCount, 0)} label pages at 4×6.`);
+
+      const cleanup = () => {
+        URL.revokeObjectURL(blobUrl);
+        printWindow.close();
+      };
+
+      setTimeout(() => {
+        try {
+          printWindow.focus();
+          printWindow.print();
+          printWindow.addEventListener("afterprint", cleanup, { once: true });
+        } catch {
+          printWindow.focus();
+        }
+      }, 1200);
+    } catch (error) {
+      printWindow.close();
+      setMessage(error instanceof Error ? error.message : "Unable to prepare labels for printing.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function processCurrent() {
     if (!selected) return;
     setBusy(true);
@@ -485,6 +544,7 @@ export default function LabelWorkspace() {
             </div>
             <div className="label-actions">
               <button className="icon-button" disabled={!selected || busy} onClick={processCurrent}>Download current</button>
+              <button className="icon-button" disabled={!items.length || busy} onClick={printAll}>Print 4×6</button>
               <button className="primary-button" disabled={!items.length || busy} onClick={processAll}>Process all & download</button>
             </div>
           </div>
