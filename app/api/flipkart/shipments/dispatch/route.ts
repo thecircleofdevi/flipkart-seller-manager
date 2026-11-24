@@ -19,10 +19,11 @@ export async function POST(request: Request) {
     const requestedLocationId = typeof body?.locationId === "string" ? body.locationId.trim() : "";
 
     const { data: owned, error } = await supabaseAdmin.from("shipments")
-      .select("flipkart_shipment_id,location_id,locations:location_id(flipkart_location_id)")
+      .select("flipkart_shipment_id,location_id,state,locations:location_id(flipkart_location_id)")
       .eq("user_id", userId).in("flipkart_shipment_id", shipmentIds);
     if (error) throw error;
     if ((owned ?? []).length !== shipmentIds.length) throw new Error("One or more shipment IDs are not present in the seller account.");
+    if ((owned ?? []).some((row) => String(row.state ?? "").toUpperCase() !== "PACKED")) throw new Error("Only PACKED shipments can be marked Ready to Dispatch.");
 
     const derivedLocations = Array.from(new Set((owned ?? []).map((row) => {
       const location = Array.isArray(row.locations) ? row.locations[0] : row.locations;
