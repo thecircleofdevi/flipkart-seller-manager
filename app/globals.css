@@ -166,3 +166,5 @@
 .preset-actions button:disabled{opacity:.5;cursor:not-allowed}
 
 .shipment-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.document-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.shipment-actions .text-button,.document-row-actions .text-button{font-size:11px}
+
+.shipment-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;padding:6px;background:rgba(255,255,255,.7);border:1px solid rgba(255,255,255,.85);border-radius:12px;box-shadow:0 5px 18px rgba(0,0,0,.035)}.shipment-tabs .text-button{color:#6e6e73;padding:7px 9px;border-radius:8px;font-size:10px}.shipment-tabs .text-button:hover{background:#f0f0f2;color:#1d1d1f}.shipment-tabs .text-button.active-tab{background:#1d1d1f;color:#fff}@media(max-width:760px){.shipment-tabs{overflow-x:auto;flex-wrap:nowrap}.shipment-tabs .text-button{white-space:nowrap}}
