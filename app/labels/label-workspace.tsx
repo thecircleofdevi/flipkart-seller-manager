@@ -289,7 +289,7 @@ export default function LabelWorkspace() {
         }
       }
       const bytes = await output.save({ useObjectStreams: true });
-      downloadBlob(new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], { type: "application/pdf" }), `flipkart-labels-${items.length}.pdf`);
+      downloadBlob(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), `flipkart-labels-${items.length}.pdf`);
       setMessage(`${items.length} source PDF${items.length === 1 ? "" : "s"} processed into 4×6 label pages.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to process labels.");
