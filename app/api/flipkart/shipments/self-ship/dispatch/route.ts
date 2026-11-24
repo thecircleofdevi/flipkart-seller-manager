@@ -65,9 +65,11 @@ export async function POST(request: Request) {
     if ((shipments ?? []).length !== shipmentIds.length) {
       throw new Error("One or more shipment IDs are not present in the seller account.");
     }
-    if ((shipments ?? []).some((shipment) => String(shipment.shipment_type ?? "").toUpperCase() !== "SELF")) {
+undefined    if ((shipments ?? []).some((shipment) => String(shipment.shipment_type ?? "").toUpperCase() !== "SELF")) {
       throw new Error("Self-ship dispatch can only be used for SELF shipments.");
     }
+    const dispatchableStates = new Set(["APPROVED", "PACKED", "PACKING_IN_PROGRESS"]);
+    if ((shipments ?? []).some((shipment) => !dispatchableStates.has(String(shipment.state ?? "").toUpperCase()))) throw new Error("Self-ship dispatch is only allowed for APPROVED, PACKED, or PACKING_IN_PROGRESS shipments.");
 
     const locationDbIds = [...new Set((shipments ?? []).map((shipment) => shipment.location_id).filter(Boolean))] as string[];
     const requestedLocationId = optionalString(body.locationId);
