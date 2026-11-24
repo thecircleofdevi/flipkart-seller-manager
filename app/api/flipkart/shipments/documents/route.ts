@@ -61,6 +61,7 @@ export async function GET(request: Request) {
       .from("document_jobs")
       .insert({
         user_id: userId,
+        shipment_id: shipmentIds.length === 1 ? (await supabaseAdmin.from("shipments").select("id").eq("user_id", userId).eq("flipkart_shipment_id", shipmentIds[0]).maybeSingle()).data?.id ?? null : null,
         shipment_ids: shipmentIds,
         type: jobType,
         status: "processing",
