@@ -86,6 +86,7 @@ export async function POST(request: Request) {
           notification.shipment_id ??
           stringValue(payload.shipmentId) ??
           stringValue(attributes.shipmentId);
+        let entityMatched = false;
 
         if (shipmentFlipkartId) {
           const { data: shipment } = await supabaseAdmin
@@ -96,6 +97,7 @@ export async function POST(request: Request) {
             .maybeSingle();
 
           if (shipment) {
+            entityMatched = true;
             const nextState =
               normalizeShipmentState(notification.event_type, attributes) ??
               stringValue(payload.status);
@@ -155,9 +157,14 @@ export async function POST(request: Request) {
             .maybeSingle();
 
           if (returnRow) {
+            entityMatched = true;
             const nextStatus =
               normalizeReturnStatus(notification.event_type, attributes) ??
               stringValue(payload.status);
+
+            if (!nextStatus) {
+              throw new Error(`Unmapped return notification event: ${notification.event_type}`);
+            }
 
             const { error: returnError } = await supabaseAdmin
               .from("returns")
@@ -170,9 +177,6 @@ export async function POST(request: Request) {
               .eq("user_id", userId);
 
             if (returnError) throw returnError;
-            if (!nextStatus) {
-              throw new Error(`Unmapped return notification event: ${notification.event_type}`);
-            }
 
             if (returnRow.status !== nextStatus) {
               const { error: eventError } = await supabaseAdmin
@@ -189,6 +193,13 @@ export async function POST(request: Request) {
               if (eventError) throw eventError;
             }
           }
+        }
+
+        const hasReferencedEntity = Boolean(shipmentFlipkartId || returnFlipkartId);
+        if (hasReferencedEntity && !entityMatched) {
+          throw new Error(
+            "Referenced shipment or return is not present locally yet; notification will be retried after synchronization.",
+          );
         }
 
         const { error: markError } = await supabaseAdmin
