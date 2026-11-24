@@ -27,7 +27,7 @@ export default async function Home() {
     Promise.all(metricTables.map(({ table }) => countRows(supabase, table))),
     supabase.from("sync_runs").select("id,sync_type,status,started_at,finished_at,records_written,error_message").order("started_at", { ascending: false }).limit(12),
     supabase.from("returns").select("id,flipkart_return_id,status,return_reason,created_at").in("status", ["CREATED", "created", "OPEN", "open"]).order("created_at", { ascending: false }).limit(12),
-    supabase.from("shipments").select("id,flipkart_shipment_id,state,dispatch_by,tracking_id,courier_name,shipment_type").in("state", ["APPROVED", "PACKING_IN_PROGRESS", "PACKED", "READY_TO_DISPATCH"]).order("dispatch_by", { ascending: true }).limit(12),
+    supabase.from("shipments").select("id,flipkart_shipment_id,state,dispatch_by,tracking_id,courier_name,shipment_type,hold").order("dispatch_by", { ascending: true }).limit(1000),
     supabase.from("listing_inventory").select("id,listing_id,quantity,effective_at").order("quantity", { ascending: true }).limit(50),
     supabase.from("orders").select("id,flipkart_order_id,order_date,status").order("order_date", { ascending: false }).limit(1000),
     supabase.from("listings").select("id,sku,fsn,status,procurement_type,shipping_provider,updated_at").order("updated_at", { ascending: false }).limit(1000),
@@ -47,7 +47,7 @@ export default async function Home() {
       metrics={metricTables.map((m, i) => ({ label: m.label, icon: m.icon, caption: m.caption, value: metricResults[i].count }))}
       syncRows={(recentSyncs.data ?? []).map((r) => ({ id: r.id, sync_type: r.sync_type, status: r.status, started_at: r.started_at, finished_at: r.finished_at, records_written: r.records_written, error_message: r.error_message }))}
       returns={(openReturns.data ?? []).map((r) => ({ id: r.id, flipkart_return_id: r.flipkart_return_id, status: r.status, return_reason: r.return_reason, created_at: r.created_at }))}
-      shipments={(activeShipments.data ?? []).map((s) => ({ id: s.id, flipkart_shipment_id: s.flipkart_shipment_id, state: s.state, dispatch_by: s.dispatch_by, tracking_id: s.tracking_id, courier_name: s.courier_name, shipment_type: s.shipment_type }))}
+      shipments={(activeShipments.data ?? []).map((s) => ({ id: s.id, flipkart_shipment_id: s.flipkart_shipment_id, state: s.state, dispatch_by: s.dispatch_by, tracking_id: s.tracking_id, courier_name: s.courier_name, shipment_type: s.shipment_type, hold: s.hold }))}
       lowStock={lowStock}
       systemHealthy={!failed}
       orders={(recentOrders.data ?? []).map((o) => ({ id: o.id, flipkart_order_id: o.flipkart_order_id, order_date: o.order_date, status: o.status }))}
