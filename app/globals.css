@@ -164,3 +164,5 @@
 .preset-actions button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 7px;font-size:8px;color:var(--muted);cursor:pointer}
 .preset-actions button:hover{background:#f4f4f6;color:var(--text)}
 .preset-actions button:disabled{opacity:.5;cursor:not-allowed}
+
+.shipment-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.document-row-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.shipment-actions .text-button,.document-row-actions .text-button{font-size:11px}
