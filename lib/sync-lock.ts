@@ -22,7 +22,7 @@ export async function claimSyncRun(
     .update({
       status: "failed",
       finished_at: new Date().toISOString(),
-      error_message: "Sync run expired after exceeding the 30-minute execution window.",
+      error_message: "Sync run expired after exceeding the 10-minute execution window.",
     })
     .eq("user_id", userId)
     .eq("sync_type", syncType)
