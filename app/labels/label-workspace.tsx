@@ -66,10 +66,13 @@ export default function LabelWorkspace() {
   const [previewMode, setPreviewMode] = useState<"blended" | "page" | "odd-even">("blended");
   const [previewPage, setPreviewPage] = useState(1);
   const [batchReport, setBatchReport] = useState<null | { pages: number; files: number; valid: number; warnings: string[]; checkedAt: string }>(null);
+  const [batchPages, setBatchPages] = useState<Array<{ itemIndex: number; pageIndex: number; fileName: string; width: number; height: number; valid: boolean; warning?: string }>>([]);
+  const [batchPageCursor, setBatchPageCursor] = useState(0);
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
 
   const selected = items[selectedIndex] ?? null;
+  const inspectedBatchPage = batchPages[batchPageCursor] ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -477,25 +480,42 @@ export default function LabelWorkspace() {
       const warnings: string[] = [];
       const reference = selected ? { width: selected.pageWidth, height: selected.pageHeight } : null;
 
-      for (const item of items) {
+      const pageResults: Array<{ itemIndex: number; pageIndex: number; fileName: string; width: number; height: number; valid: boolean; warning?: string }> = [];
+      for (const [itemIndex, item] of items.entries()) {
         const pdf = await PDFDocument.load(await item.file.arrayBuffer());
         pdf.getPages().forEach((page, pageIndex) => {
           pages++;
           const size = page.getSize();
           const fits = crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
             crop.x + crop.width <= size.width + 0.5 && crop.y + crop.height <= size.height + 0.5;
-          if (fits) valid++;
-          else warnings.push(`${item.file.name} · page ${pageIndex + 1}: crop extends outside ${Math.round(size.width)}×${Math.round(size.height)} pt page.`);
+          const widthDelta = reference ? Math.abs(size.width - reference.width) / Math.max(reference.width, 1) : 0;
+          const heightDelta = reference ? Math.abs(size.height - reference.height) / Math.max(reference.height, 1) : 0;
+          const sizeMismatch = widthDelta > 0.02 || heightDelta > 0.02;
+          const pageWarnings: string[] = [];
 
-          if (reference) {
-            const widthDelta = Math.abs(size.width - reference.width) / Math.max(reference.width, 1);
-            const heightDelta = Math.abs(size.height - reference.height) / Math.max(reference.height, 1);
-            if (widthDelta > 0.02 || heightDelta > 0.02) {
-              warnings.push(`${item.file.name} · page ${pageIndex + 1}: page size differs from the selected reference page.`);
-            }
+          if (!fits) {
+            pageWarnings.push(`Crop extends outside ${Math.round(size.width)}×${Math.round(size.height)} pt page.`);
+            warnings.push(`${item.file.name} · page ${pageIndex + 1}: ${pageWarnings.at(-1)}`);
           }
+          if (sizeMismatch) {
+            pageWarnings.push("Page size differs from the selected reference page.");
+            warnings.push(`${item.file.name} · page ${pageIndex + 1}: ${pageWarnings.at(-1)}`);
+          }
+
+          if (fits) valid++;
+          pageResults.push({
+            itemIndex,
+            pageIndex,
+            fileName: item.file.name,
+            width: size.width,
+            height: size.height,
+            valid: fits && !sizeMismatch,
+            warning: pageWarnings.length ? pageWarnings.join(" ") : undefined,
+          });
         });
       }
+      setBatchPages(pageResults);
+      setBatchPageCursor(0);
 
       const uniqueWarnings = [...new Set(warnings)];
       setBatchReport({ pages, files: items.length, valid, warnings: uniqueWarnings, checkedAt: new Date().toLocaleTimeString() });
@@ -587,7 +607,8 @@ export default function LabelWorkspace() {
             </div>
             <div className="label-actions">
               <button className="icon-button" disabled={!selected || busy} onClick={processCurrent}>Download current</button>
-              <button className="icon-button" disabled={!items.length || busy} onClick={printAll}>Print 4×6</button>\n              <button className="icon-button" disabled={!items.length || busy} onClick={validateBatch}>Check batch</button>
+              <button className="icon-button" disabled={!items.length || busy} onClick={printAll}>Print 4×6</button>
+              <button className="icon-button" disabled={!items.length || busy} onClick={validateBatch}>Check batch</button>
               <button className="primary-button" disabled={!items.length || busy} onClick={processAll}>Process all & download</button>
             </div>
           </div>
@@ -688,8 +709,44 @@ export default function LabelWorkspace() {
               <div><strong>4×6</strong><span>output size</span></div>
               <div><strong>{batchReport.warnings.length}</strong><span>warnings</span></div>
             </div>
+            {batchPages.length > 0 && (
+              <div className="batch-inspector">
+                <div className="batch-inspector-head">
+                  <div>
+                    <strong>Inspect label pages</strong>
+                    <span>Review each page before printing. Warning pages are marked.</span>
+                  </div>
+                  <div className="batch-inspector-nav">
+                    <button disabled={batchPageCursor <= 0} onClick={() => setBatchPageCursor((value) => Math.max(0, value - 1))}>Previous</button>
+                    <span>{batchPageCursor + 1} / {batchPages.length}</span>
+                    <button disabled={batchPageCursor >= batchPages.length - 1} onClick={() => setBatchPageCursor((value) => Math.min(batchPages.length - 1, value + 1))}>Next</button>
+                  </div>
+                </div>
+                {inspectedBatchPage && (
+                  <div className="batch-inspector-row">
+                    <div className="batch-page-meta">
+                      <strong>Page {inspectedBatchPage.pageIndex + 1} · {inspectedBatchPage.fileName}</strong>
+                      <span>{Math.round(inspectedBatchPage.width)} × {Math.round(inspectedBatchPage.height)} pt</span>
+                    </div>
+                    <div className={"batch-page-status " + (inspectedBatchPage.valid ? "ok" : "warn")}>
+                      {inspectedBatchPage.valid ? "Crop ready" : "Needs review"}
+                    </div>
+                    {inspectedBatchPage.warning && <div className="batch-page-warning">{inspectedBatchPage.warning}</div>}
+                    <button
+                      className="icon-button"
+                      onClick={() => {
+                        setSelectedIndex(inspectedBatchPage.itemIndex);
+                        setPreviewPage(inspectedBatchPage.pageIndex + 1);
+                      }}
+                    >
+                      Open in editor
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {batchReport.warnings.length > 0 && <div className="batch-warning-list">{batchReport.warnings.slice(0, 8).map((warning) => <div key={warning}>{warning}</div>)}{batchReport.warnings.length > 8 && <div>+ {batchReport.warnings.length - 8} more warnings</div>}</div>}
-          </div>}
+          </div>
 
           {selected && <div className="crop-options">
             <div className="crop-options-head">
