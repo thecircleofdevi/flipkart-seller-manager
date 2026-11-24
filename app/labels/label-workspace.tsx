@@ -61,6 +61,7 @@ export default function LabelWorkspace() {
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [shipmentIdsInput, setShipmentIdsInput] = useState("");
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
 
@@ -136,6 +137,50 @@ export default function LabelWorkspace() {
       return;
     }
     updateCrop({ [key]: value });
+  }
+
+
+  async function loadShipmentLabels() {
+    const shipmentIds = [...new Set(shipmentIdsInput.split(",").map((id) => id.trim()).filter(Boolean))];
+    if (!shipmentIds.length) {
+      setMessage("Enter at least one Flipkart shipment ID.");
+      return;
+    }
+    if (shipmentIds.length > 100) {
+      setMessage("A maximum of 100 shipment IDs can be loaded at once.");
+      return;
+    }
+    setBusy(true);
+    setMessage("Requesting labels from Flipkart...");
+    try {
+      const response = await fetch(`/api/flipkart/shipments/documents?type=labels&shipmentIds=${encodeURIComponent(shipmentIds.join(","))}`);
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || "Flipkart label request failed.");
+      }
+      const blob = await response.blob();
+      if (blob.size < 100) throw new Error("Flipkart returned an empty label document.");
+      const file = new File([blob], `flipkart-labels-${shipmentIds.length}.pdf`, { type: "application/pdf" });
+      const bytes = await file.arrayBuffer();
+      const pdf = await PDFDocument.load(bytes);
+      const page = pdf.getPages()[0];
+      if (!page) throw new Error("Flipkart returned a PDF without pages.");
+      const size = page.getSize();
+      const item: PdfItem = {
+        id: crypto.randomUUID(),
+        file,
+        pageCount: pdf.getPageCount(),
+        pageWidth: size.width,
+        pageHeight: size.height,
+      };
+      setItems((current) => [...current, item]);
+      setSelectedIndex(items.length);
+      setMessage(`Loaded ${pdf.getPageCount()} label page${pdf.getPageCount() === 1 ? "" : "s"} from Flipkart for ${shipmentIds.length} shipment${shipmentIds.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to load labels from Flipkart.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function loadFiles(fileList: FileList | null) {
@@ -327,6 +372,22 @@ export default function LabelWorkspace() {
       </div>
 
       {message && <div className="label-message">{message}</div>}
+
+      <div className="label-source-bar">
+        <div>
+          <strong>Load labels from Flipkart</strong>
+          <span>Paste shipment IDs to fetch the real shipping-label PDF directly from the connected seller account.</span>
+        </div>
+        <div className="label-source-actions">
+          <input
+            value={shipmentIdsInput}
+            onChange={(e) => setShipmentIdsInput(e.target.value)}
+            placeholder="Shipment ID, Shipment ID, ..."
+            disabled={busy}
+          />
+          <button className="primary-button" disabled={busy} onClick={loadShipmentLabels}>Fetch labels</button>
+        </div>
+      </div>
 
       <div className="label-layout">
         <aside className="label-sidebar">
