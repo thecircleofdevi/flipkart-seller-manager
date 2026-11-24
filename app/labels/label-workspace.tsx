@@ -348,6 +348,19 @@ export default function LabelWorkspace() {
     }
   }
 
+  function getEffectiveCrop(sourceSize: { width: number; height: number }) {
+    const reference = selected ? { width: selected.pageWidth, height: selected.pageHeight } : sourceSize;
+    const scaleX = sourceSize.width / Math.max(reference.width, 1);
+    const scaleY = sourceSize.height / Math.max(reference.height, 1);
+    return {
+      x: crop.x * scaleX,
+      y: crop.y * scaleY,
+      width: crop.width * scaleX,
+      height: crop.height * scaleY,
+      adapted: Math.abs(scaleX - 1) > 0.001 || Math.abs(scaleY - 1) > 0.001,
+    };
+  }
+
   async function makeCroppedPdf(file: File) {
     const sourceBytes = await file.arrayBuffer();
     const source = await PDFDocument.load(sourceBytes);
@@ -387,10 +400,11 @@ export default function LabelWorkspace() {
         for (const sourcePage of source.getPages()) {
           const embedded = await output.embedPage(sourcePage);
           const sourceSize = sourcePage.getSize();
-          const cropX = clamp(crop.x, 0, sourceSize.width);
-          const cropYTop = clamp(crop.y, 0, sourceSize.height);
-          const cropW = clamp(crop.width, 1, sourceSize.width - cropX);
-          const cropH = clamp(crop.height, 1, sourceSize.height - cropYTop);
+          const effective = getEffectiveCrop(sourceSize);
+          const cropX = clamp(effective.x, 0, sourceSize.width);
+          const cropYTop = clamp(effective.y, 0, sourceSize.height);
+          const cropW = clamp(effective.width, 1, sourceSize.width - cropX);
+          const cropH = clamp(effective.height, 1, sourceSize.height - cropYTop);
           const cropYBottom = sourceSize.height - cropYTop - cropH;
           const page = output.addPage([OUTPUT_W, OUTPUT_H]);
           page.drawPage(embedded, {
@@ -428,10 +442,11 @@ export default function LabelWorkspace() {
         for (const sourcePage of source.getPages()) {
           const embedded = await output.embedPage(sourcePage);
           const sourceSize = sourcePage.getSize();
-          const cropX = clamp(crop.x, 0, sourceSize.width);
-          const cropYTop = clamp(crop.y, 0, sourceSize.height);
-          const cropW = clamp(crop.width, 1, sourceSize.width - cropX);
-          const cropH = clamp(crop.height, 1, sourceSize.height - cropYTop);
+          const effective = getEffectiveCrop(sourceSize);
+          const cropX = clamp(effective.x, 0, sourceSize.width);
+          const cropYTop = clamp(effective.y, 0, sourceSize.height);
+          const cropW = clamp(effective.width, 1, sourceSize.width - cropX);
+          const cropH = clamp(effective.height, 1, sourceSize.height - cropYTop);
           const cropYBottom = sourceSize.height - cropYTop - cropH;
           const page = output.addPage([OUTPUT_W, OUTPUT_H]);
           page.drawPage(embedded, {
