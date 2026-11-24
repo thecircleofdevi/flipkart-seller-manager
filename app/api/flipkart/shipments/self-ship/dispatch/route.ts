@@ -65,7 +65,7 @@ export async function POST(request: Request) {
     if ((shipments ?? []).length !== shipmentIds.length) {
       throw new Error("One or more shipment IDs are not present in the seller account.");
     }
-undefined    if ((shipments ?? []).some((shipment) => String(shipment.shipment_type ?? "").toUpperCase() !== "SELF")) {
+    if ((shipments ?? []).some((shipment) => String(shipment.shipment_type ?? "").toUpperCase() !== "SELF")) {
       throw new Error("Self-ship dispatch can only be used for SELF shipments.");
     }
     const dispatchableStates = new Set(["APPROVED", "PACKED", "PACKING_IN_PROGRESS"]);
