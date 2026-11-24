@@ -104,8 +104,8 @@ export default function LabelWorkspace() {
 
   const cropAspect = crop.height ? crop.width / crop.height : 2 / 3;
   const isThermalRatio = Math.abs(cropAspect - 2 / 3) < 0.02;
-  const pageDisplay = useMemo(() => {
-    if (!selected) return { width: 1, height: 1 };
+  const pageDisplay = useMemo((): { width: number; height: number; scale: number } => {
+    if (!selected) return { width: 1, height: 1, scale: 1 };
     const maxW = 720;
     const scale = Math.min(1, maxW / selected.pageWidth);
     return { width: selected.pageWidth * scale, height: selected.pageHeight * scale, scale };
@@ -303,7 +303,7 @@ export default function LabelWorkspace() {
     setBusy(true);
     try {
       const bytes = await makeCroppedPdf(selected.file);
-      downloadBlob(new Blob([bytes], { type: "application/pdf" }), `${selected.file.name.replace(/\.pdf$/i, "")}-4x6.pdf`);
+      downloadBlob(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), `${selected.file.name.replace(/\.pdf$/i, "")}-4x6.pdf`);
       setMessage("Current PDF cropped to 4×6 pages.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to process this label.");
