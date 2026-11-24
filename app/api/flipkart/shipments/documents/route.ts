@@ -43,6 +43,7 @@ function filenameFromDisposition(value: string | null, fallback: string) {
 }
 
 export async function GET(request: Request) {
+  let jobId: string | null = null;
   try {
     const userId = await assertAuthorized();
     const url = new URL(request.url);
@@ -70,6 +71,7 @@ export async function GET(request: Request) {
       .select("id")
       .single();
     if (jobError) throw jobError;
+    jobId = job.id;
 
     if (type === "labels" || type === "invoices") {
       const path = type === "labels"
