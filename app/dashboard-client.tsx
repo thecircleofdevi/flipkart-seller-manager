@@ -425,11 +425,8 @@ export default function DashboardClient(props: Props) {
       setSyncMessage("Flipkart returned no allowed self-ship vendors for this location.");
       return;
     }
-    const options = vendors.map((v: { vendor_name?: string; display_name?: string; vendor_code?: string }) => `${v.vendor_code ?? ""} | ${v.display_name ?? v.vendor_name ?? "Vendor"}`).filter(Boolean).join("
-");
-    const selectedCode = window.prompt(`Select an allowed delivery partner by entering its vendor code:
-
-${options}`, vendors[0]?.vendor_code ?? "");
+    const options = vendors.map((v: { vendor_name?: string; display_name?: string; vendor_code?: string }) => `${v.vendor_code ?? ""} | ${v.display_name ?? v.vendor_name ?? "Vendor"}`).filter(Boolean).join("\n");
+    const selectedCode = window.prompt(`Select an allowed delivery partner by entering its vendor code:\n\n${options}`, vendors[0]?.vendor_code ?? "");
     if (selectedCode === null) return;
     const selected = vendors.find((v: { vendor_code?: string }) => v.vendor_code === selectedCode.trim());
     if (!selected?.vendor_code) {
