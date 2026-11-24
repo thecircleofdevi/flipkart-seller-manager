@@ -10,7 +10,7 @@ type Props = {
   metrics: { label: string; value: number; caption: string; icon: string }[];
   syncRows: { id: string; sync_type: string; status: string; started_at: string; finished_at: string | null; records_written: number | null; error_message: string | null }[];
   returns: { id: string; flipkart_return_id?: string | null; status: string | null; return_reason: string | null; created_at: string | null }[];
-  shipments: { id: string; flipkart_shipment_id: string | null; state: string | null; dispatch_by: string | null; tracking_id: string | null; courier_name: string | null; shipment_type?: string | null }[];
+  shipments: { id: string; flipkart_shipment_id: string | null; state: string | null; dispatch_by: string | null; tracking_id: string | null; courier_name: string | null; shipment_type?: string | null; hold?: boolean | null }[];
   lowStock: number;
   systemHealthy: boolean;
   orders: { id: string; flipkart_order_id: string | null; order_date: string | null; status: string | null }[];
