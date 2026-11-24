@@ -62,6 +62,9 @@ export default function LabelWorkspace() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [shipmentIdsInput, setShipmentIdsInput] = useState("");
+  const [unit, setUnit] = useState<"in" | "cm">("in");
+  const [previewMode, setPreviewMode] = useState<"blended" | "page" | "odd-even">("blended");
+  const [previewPage, setPreviewPage] = useState(1);
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
 
@@ -103,8 +106,32 @@ export default function LabelWorkspace() {
   const pageUrl = useMemo(() => selected ? URL.createObjectURL(selected.file) : null, [selected]);
   useEffect(() => () => { if (pageUrl) URL.revokeObjectURL(pageUrl); }, [pageUrl]);
 
+  useEffect(() => {
+    setPreviewPage((page) => clamp(page, 1, selected?.pageCount ?? 1));
+  }, [selectedIndex, selected?.pageCount]);
+
   const cropAspect = crop.height ? crop.width / crop.height : 2 / 3;
   const isThermalRatio = Math.abs(cropAspect - 2 / 3) < 0.02;
+  const PT_PER_IN = 72;
+  const ptToUnit = (value: number) => value / (unit === "in" ? PT_PER_IN : PT_PER_IN / 2.54);
+  const unitToPt = (value: number) => value * (unit === "in" ? PT_PER_IN : PT_PER_IN / 2.54);
+  const marginsPt = selected
+    ? {
+        top: crop.y,
+        bottom: Math.max(0, selected.pageHeight - crop.y - crop.height),
+        left: crop.x,
+        right: Math.max(0, selected.pageWidth - crop.x - crop.width),
+      }
+    : { top: 0, bottom: 0, left: 0, right: 0 };
+  const margins = {
+    top: ptToUnit(marginsPt.top),
+    bottom: ptToUnit(marginsPt.bottom),
+    left: ptToUnit(marginsPt.left),
+    right: ptToUnit(marginsPt.right),
+  };
+  const cropSize = selected
+    ? { width: ptToUnit(crop.width), height: ptToUnit(crop.height) }
+    : { width: 0, height: 0 };
   const pageDisplay = useMemo((): { width: number; height: number; scale: number } => {
     if (!selected) return { width: 1, height: 1, scale: 1 };
     const maxW = 720;
@@ -125,18 +152,46 @@ export default function LabelWorkspace() {
     });
   }
 
-  function setCropField(key: keyof typeof crop, raw: string) {
+  function setMarginField(key: "top" | "bottom" | "left" | "right", raw: string) {
+    if (!selected) return;
     const value = Number(raw);
     if (!Number.isFinite(value)) return;
+    const next = {
+      top: marginsPt.top,
+      bottom: marginsPt.bottom,
+      left: marginsPt.left,
+      right: marginsPt.right,
+      [key]: Math.max(0, unitToPt(value)),
+    };
+    const maxX = Math.max(0, selected.pageWidth - next.left - next.right);
+    const maxY = Math.max(0, selected.pageHeight - next.top - next.bottom);
+    updateCrop({
+      x: next.left,
+      y: next.top,
+      width: Math.max(1, maxX),
+      height: Math.max(1, maxY),
+    });
+  }
+
+  function setDimensionField(key: "width" | "height", raw: string) {
+    if (!selected) return;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    const valuePt = Math.max(1, unitToPt(value));
     if (key === "width") {
-      updateCrop({ width: value, height: value * 1.5 });
-      return;
+      const width = clamp(valuePt, 1, selected.pageWidth - marginsPt.left);
+      updateCrop({ width, x: marginsPt.left, y: marginsPt.top });
+    } else {
+      const height = clamp(valuePt, 1, selected.pageHeight - marginsPt.top);
+      updateCrop({ height, x: marginsPt.left, y: marginsPt.top });
     }
-    if (key === "height") {
-      updateCrop({ height: value, width: value / 1.5 });
-      return;
-    }
-    updateCrop({ [key]: value });
+  }
+
+  function autoCrop() {
+    if (!selected) return;
+    const next = pageBox(selected);
+    setCrop(next);
+    setMessage("Auto-crop applied. Fine-tune the crop box if the Flipkart PDF has extra content around the label.");
   }
 
 
@@ -426,30 +481,82 @@ export default function LabelWorkspace() {
           </div>
 
           {selected && pageUrl ? (
-            <div className="label-canvas-wrap">
-              <div
-                className="label-canvas"
-                ref={pageRef}
-                style={{ width: pageDisplay.width, height: pageDisplay.height }}
-              >
-                <iframe title="PDF page preview" src={pageUrl + "#page=1&toolbar=0&navpanes=0"} className="label-pdf-preview" />
-                <div
-                  className="crop-box"
-                  style={{
-                    left: crop.x * pageDisplay.scale,
-                    top: crop.y * pageDisplay.scale,
-                    width: crop.width * pageDisplay.scale,
-                    height: crop.height * pageDisplay.scale,
-                  }}
-                  onPointerDown={pointerDown}
-                  onPointerMove={pointerMove}
-                  onPointerUp={pointerUp}
-                  onPointerCancel={pointerUp}
-                >
-                  <span>4×6 crop</span>
+            <>
+              <div className="preview-toolbar">
+                <div>
+                  <strong>Preview mode</strong>
+                  <span>Choose how the source PDF is inspected before cropping.</span>
+                </div>
+                <div className="preview-mode-tabs">
+                  <button className={previewMode === "blended" ? "active" : ""} onClick={() => setPreviewMode("blended")}>Blended</button>
+                  <button className={previewMode === "page" ? "active" : ""} onClick={() => setPreviewMode("page")}>Page by page</button>
+                  <button className={previewMode === "odd-even" ? "active" : ""} onClick={() => setPreviewMode("odd-even")}>Odd &amp; even</button>
+                </div>
+                <div className="preview-page-control">
+                  <label>Page</label>
+                  <select value={previewPage} onChange={(e) => setPreviewPage(Number(e.target.value))}>
+                    {Array.from({ length: selected.pageCount }, (_, i) => i + 1).map((page) => <option key={page} value={page}>{page}</option>)}
+                  </select>
                 </div>
               </div>
-            </div>
+
+              <div className="label-canvas-wrap">
+                {previewMode === "odd-even" ? (
+                  <div className="preview-pair">
+                    {[previewPage % 2 === 0 ? previewPage - 1 : previewPage, previewPage % 2 === 0 ? previewPage : previewPage + 1]
+                      .filter((page) => page >= 1 && page <= selected.pageCount)
+                      .map((page, pairIndex) => (
+                        <div
+                          key={page}
+                          className="label-canvas preview-pair-page"
+                          ref={pairIndex === 0 ? pageRef : undefined}
+                          style={{ width: pageDisplay.width, height: pageDisplay.height }}
+                        >
+                          <iframe title={`PDF page preview ${page}`} src={pageUrl + `#page=${page}&toolbar=0&navpanes=0`} className="label-pdf-preview" />
+                          {pairIndex === 0 && <div
+                            className="crop-box"
+                            style={{
+                              left: crop.x * pageDisplay.scale,
+                              top: crop.y * pageDisplay.scale,
+                              width: crop.width * pageDisplay.scale,
+                              height: crop.height * pageDisplay.scale,
+                            }}
+                            onPointerDown={pointerDown}
+                            onPointerMove={pointerMove}
+                            onPointerUp={pointerUp}
+                            onPointerCancel={pointerUp}
+                          >
+                            <span>4×6 crop</span>
+                          </div>}
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  <div
+                    className="label-canvas"
+                    ref={pageRef}
+                    style={{ width: pageDisplay.width, height: pageDisplay.height }}
+                  >
+                    <iframe title="PDF page preview" src={pageUrl + `#page=${previewPage}&toolbar=0&navpanes=0`} className="label-pdf-preview" />
+                    <div
+                      className="crop-box"
+                      style={{
+                        left: crop.x * pageDisplay.scale,
+                        top: crop.y * pageDisplay.scale,
+                        width: crop.width * pageDisplay.scale,
+                        height: crop.height * pageDisplay.scale,
+                      }}
+                      onPointerDown={pointerDown}
+                      onPointerMove={pointerMove}
+                      onPointerUp={pointerUp}
+                      onPointerCancel={pointerUp}
+                    >
+                      <span>4×6 crop</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
           ) : (
             <div className="label-dropzone">
               <div className="empty-orb">▣</div>
@@ -459,12 +566,28 @@ export default function LabelWorkspace() {
             </div>
           )}
 
-          {selected && <div className="crop-controls">
-            <div className="crop-control"><label>Left (pt)</label><input type="number" value={Math.round(crop.x)} onChange={(e) => setCropField("x", e.target.value)} /></div>
-            <div className="crop-control"><label>Top (pt)</label><input type="number" value={Math.round(crop.y)} onChange={(e) => setCropField("y", e.target.value)} /></div>
-            <div className="crop-control"><label>Width (pt)</label><input type="number" value={Math.round(crop.width)} onChange={(e) => setCropField("width", e.target.value)} /></div>
-            <div className="crop-control"><label>Height (pt)</label><input type="number" value={Math.round(crop.height)} onChange={(e) => setCropField("height", e.target.value)} /></div>
-            <div className={"ratio-note " + (isThermalRatio ? "ok" : "warn")}>{isThermalRatio ? "2:3 thermal ratio" : "Crop ratio will be scaled to 4×6"}</div>
+          {selected && <div className="crop-options">
+            <div className="crop-options-head">
+              <div>
+                <strong>Crop options</strong>
+                <span>Set exact margins and page dimensions, or drag the crop box above.</span>
+              </div>
+              <div className="unit-toggle">
+                <button className={unit === "in" ? "active" : ""} onClick={() => setUnit("in")}>inch</button>
+                <button className={unit === "cm" ? "active" : ""} onClick={() => setUnit("cm")}>cm</button>
+              </div>
+            </div>
+
+            <div className="crop-options-grid">
+              <div className="crop-control"><label>Top</label><input type="number" step="0.01" value={margins.top.toFixed(2)} onChange={(e) => setMarginField("top", e.target.value)} /></div>
+              <div className="crop-control"><label>Width</label><input type="number" step="0.01" value={cropSize.width.toFixed(2)} onChange={(e) => setDimensionField("width", e.target.value)} /></div>
+              <div className="crop-control"><label>Height</label><input type="number" step="0.01" value={cropSize.height.toFixed(2)} onChange={(e) => setDimensionField("height", e.target.value)} /></div>
+              <div className="crop-control"><label>Bottom</label><input type="number" step="0.01" value={margins.bottom.toFixed(2)} onChange={(e) => setMarginField("bottom", e.target.value)} /></div>
+              <div className="crop-control"><label>Left</label><input type="number" step="0.01" value={margins.left.toFixed(2)} onChange={(e) => setMarginField("left", e.target.value)} /></div>
+              <div className="crop-control"><label>Right</label><input type="number" step="0.01" value={margins.right.toFixed(2)} onChange={(e) => setMarginField("right", e.target.value)} /></div>
+              <button className="auto-crop-button" onClick={autoCrop} disabled={busy}>Auto-crop</button>
+              <div className={"ratio-note " + (isThermalRatio ? "ok" : "warn")}>{isThermalRatio ? "2:3 thermal ratio" : "Will scale to 4×6 output"}</div>
+            </div>
           </div>}
 
           <div className="label-save-row">
