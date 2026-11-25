@@ -233,7 +233,7 @@ export async function POST(request: Request) {
         if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
         if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
       }
-      nextUrl = `/v2/returns?${params.toString()}`;
+      nextUrl = `/sellers/v2/returns?${params.toString()}`;
     }
 
     activeUrl = nextUrl;
