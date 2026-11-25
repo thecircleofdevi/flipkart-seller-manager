@@ -157,7 +157,7 @@ export async function POST(request: Request) {
       await supabaseAdmin.from("backfill_windows").update({ status: "pending", last_error: null, updated_at: new Date().toISOString() }).eq("backfill_job_id", job.id).eq("status", "failed");
     }
 
-    let { data: win, error: winError } = await supabaseAdmin
+    const { data: candidate, error: candidateError } = await supabaseAdmin
       .from("backfill_windows")
       .select("*")
       .eq("backfill_job_id", job.id)
@@ -165,9 +165,9 @@ export async function POST(request: Request) {
       .order("window_start", { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (winError) throw winError;
+    if (candidateError) throw candidateError;
 
-    if (!win) {
+    if (!candidate) {
       const detailResponse = await invokeSync(request, "shipment_details", {});
       const detailResult = await detailResponse.clone().json().catch(() => ({}));
       if (!detailResponse.ok) throw new Error(detailResult.error ?? "Shipment detail refresh failed.");
@@ -181,14 +181,31 @@ export async function POST(request: Request) {
     }
 
     const stage =
-      win.orders_status !== "completed" ? "orders" :
-      win.shipments_status !== "completed" ? "shipments" :
+      candidate.orders_status !== "completed" ? "orders" :
+      candidate.shipments_status !== "completed" ? "shipments" :
       "returns";
 
-    await supabaseAdmin.from("backfill_windows").update({
-      status: "running",
-      updated_at: new Date().toISOString(),
-    }).eq("id", win.id);
+    const claimTime = new Date().toISOString();
+    const { data: win, error: claimError } = await supabaseAdmin
+      .from("backfill_windows")
+      .update({
+        status: "running",
+        updated_at: claimTime,
+      })
+      .eq("id", candidate.id)
+      .in("status", ["pending", "failed"])
+      .select("*")
+      .maybeSingle();
+
+    if (claimError) throw claimError;
+
+    if (!win) {
+      return NextResponse.json({
+        ok: true,
+        status: "running",
+        message: "Backfill window was claimed by another worker. Retry the step.",
+      });
+    }
 
     try {
       let response: Response | null = null;
