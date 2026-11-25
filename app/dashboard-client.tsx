@@ -613,7 +613,7 @@ export default function DashboardClient(props: Props) {
   async function runFullShipmentBackfill() {
     if (fullBackfillRunning || syncing) return;
     setFullBackfillRunning(true);
-    setSyncMessage("Starting full historical shipment backfill from 2020...");
+    setSyncMessage("Starting full historical shipment backfill from March 2025...");
     setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 0, recordsWritten: 0 });
     const started = Date.now();
     const filters: Array<{ filterType: "preDispatch" | "postDispatch" | "cancelled"; shipmentType?: "NORMAL" | "SELF" }> = [
@@ -624,7 +624,7 @@ export default function DashboardClient(props: Props) {
     ];
 
     try {
-      let windowFrom = new Date("2020-01-01T00:00:00.000Z");
+      let windowFrom = new Date("2025-03-01T00:00:00.000Z");
       const now = new Date();
       let totalWritten = 0;
 
