@@ -60,17 +60,9 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5
   throw lastError;
 }
 
-function normalizePath(value: string) {
+function normalizePaginationUrl(value: string) {
   const url = new URL(value, "https://api.flipkart.net");
   if (url.hostname !== "api.flipkart.net") throw new Error("Invalid Flipkart pagination URL.");
-
-  // Flipkart's v2 returns endpoint has been observed returning a legacy
-  // pagination path without the /sellers/v2 prefix. The documented endpoint
-  // is /sellers/v2/returns, so normalize only this known pagination shape.
-  if (url.pathname.startsWith("/returns/search/")) {
-    url.pathname = "/sellers/v2" + url.pathname;
-  }
-
   return url.pathname + url.search;
 }
 
@@ -163,6 +155,7 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
 
 export async function POST(request: Request) {
   let runId: string | null = null;
+  let activeUrl: string | null = null;
   try {
     assertAuthorized(request);
     const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
@@ -172,7 +165,7 @@ export async function POST(request: Request) {
     const source = body?.source === "courier_return" ? "courier_return" : body?.source === "customer_return" ? "customer_return" : null;
     const sources = source ? [source] : ["customer_return", "courier_return"];
 
-    let nextUrl = typeof body?.nextUrl === "string" && body.nextUrl ? normalizePath(body.nextUrl) : null;
+    let nextUrl = typeof body?.nextUrl === "string" && body.nextUrl ? normalizePaginationUrl(body.nextUrl) : null;
     let currentSource = typeof body?.currentSource === "string" && sources.includes(body.currentSource) ? body.currentSource : sources[0];
 
     let modifiedAfter: string | null = typeof body?.modifiedAfter === "string" ? body.modifiedAfter : null;
@@ -227,6 +220,7 @@ export async function POST(request: Request) {
       nextUrl = `/sellers/v2/returns?${params.toString()}`;
     }
 
+    activeUrl = nextUrl;
     const requestStarted = Date.now();
     const result = await requestWithRetry<ReturnResponse>(nextUrl, { method: "GET" });
     const items = result.data.returns ?? result.data.returnItems ?? [];
@@ -240,7 +234,7 @@ export async function POST(request: Request) {
     const hasMore = Boolean(returnedNext);
 
     let nextSource = currentSource;
-    let continuationUrl = hasMore ? normalizePath(returnedNext!) : null;
+    let continuationUrl = hasMore ? normalizePaginationUrl(returnedNext!) : null;
 
     if (!hasMore) {
       const index = sources.indexOf(currentSource);
@@ -262,6 +256,8 @@ export async function POST(request: Request) {
         mode, sources, currentSource: nextSource, modifiedAfter, modifiedBefore,
         hasMore, lastPageSize: items.length,
         lastRequestDurationMs: Date.now() - requestStarted,
+        lastUrl: activeUrl,
+        nextUrl: continuationUrl,
       },
     }).eq("id", returnRunId).eq("user_id", userId);
     if (progressError) throw progressError;
@@ -279,16 +275,16 @@ export async function POST(request: Request) {
       recordsWritten: totalWritten,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown sync error";
-    if (error instanceof SyncAlreadyRunningError) {
-      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
-    }
+    const message = error instanceof Error ? error.message : String(error);
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
         status: "failed",
         finished_at: new Date().toISOString(),
-        error_message: message,
+        error_message: activeUrl ? `${message} [url=${activeUrl}]` : message,
       }).eq("id", runId);
+    }
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
     }
     return NextResponse.json({ ok: false, error: message }, { status: message === "Unauthorized sync request." ? 401 : 500 });
   }
