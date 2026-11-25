@@ -331,6 +331,7 @@ export async function POST(request: Request) {
               pendingShipmentIds: shipmentIds,
               shipmentNextPageUrl: shipmentResult.hasMore ? shipmentResult.nextPageUrl : null,
               shipmentSyncRunId: shipmentResult.syncRunId ?? metadata.shipmentSyncRunId ?? null,
+              shipmentPageComplete: !shipmentResult.hasMore,
             },
           });
           return NextResponse.json({ ok: true, status: "running", stage: "shipment_details", windowStart: win.window_start, windowEnd: win.window_end, result: shipmentResult });
