@@ -161,10 +161,17 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}));
     const mode = body?.mode === "full" ? "full" : "incremental";
 
+    const dateField = body?.dateField === "orderDate" ? "orderDate" : "modifiedDate";
     let modifiedAfter = typeof body?.modifiedAfter === "string" ? body.modifiedAfter : null;
     let modifiedBefore = typeof body?.modifiedBefore === "string" ? body.modifiedBefore : null;
+    let orderDateAfter = typeof body?.orderDateAfter === "string" ? body.orderDateAfter : null;
+    let orderDateBefore = typeof body?.orderDateBefore === "string" ? body.orderDateBefore : null;
 
-    if (!modifiedAfter || !modifiedBefore) {
+    if (mode === "full" && dateField === "orderDate") {
+      if (!orderDateAfter || !orderDateBefore) throw new Error("Full order sync with orderDate requires orderDateAfter and orderDateBefore.");
+      orderDateAfter = new Date(orderDateAfter).toISOString();
+      orderDateBefore = new Date(orderDateBefore).toISOString();
+    } else if (!modifiedAfter || !modifiedBefore) {
       if (mode === "full" && body?.modifiedFrom && body?.modifiedTo) {
         modifiedAfter = new Date(body.modifiedFrom).toISOString();
         modifiedBefore = new Date(body.modifiedTo).toISOString();
@@ -188,9 +195,12 @@ export async function POST(request: Request) {
       }
     }
 
-    if (!modifiedAfter || !modifiedBefore) throw new Error("Order sync date window is required.");
+    if (dateField === "modifiedDate" && (!modifiedAfter || !modifiedBefore)) throw new Error("Order sync date window is required.");
+    if (dateField === "orderDate" && (!orderDateAfter || !orderDateBefore)) throw new Error("Order date window is required.");
 
-    const checkpointDomain = `orders:${mode}`;
+    const checkpointDomain = dateField === "orderDate"
+      ? `orders:full:orderDate:${orderDateAfter}:${orderDateBefore}`
+      : `orders:${mode}`;
     const { data: checkpoint } = await supabaseAdmin
       .from("sync_checkpoints")
       .select("id,cursor")
@@ -228,7 +238,7 @@ export async function POST(request: Request) {
       totalWritten = existingRun.records_written ?? totalWritten;
     } else {
       runId = await claimSyncRun(userId, "orders", checkpointDomain, {
-        mode, modifiedAfter, modifiedBefore,
+        mode, dateField, modifiedAfter, modifiedBefore, orderDateAfter, orderDateBefore,
       });
     }
 
@@ -248,9 +258,9 @@ export async function POST(request: Request) {
     const path = nextPageURL ?? "/sellers/v2/orders/search";
     activeUrl = path;
 
-    const filter = {
-      modifiedDate: { fromDate: modifiedAfter, toDate: modifiedBefore },
-    };
+    const filter = dateField === "orderDate"
+      ? { orderDate: { fromDate: orderDateAfter, toDate: orderDateBefore } }
+      : { modifiedDate: { fromDate: modifiedAfter, toDate: modifiedBefore } };
     const payload = {
       filter,
       pagination: { pageSize: 20 },
@@ -285,8 +295,11 @@ export async function POST(request: Request) {
       error_message: null,
       metadata: {
         mode,
+        dateField,
         modifiedAfter,
         modifiedBefore,
+        orderDateAfter,
+        orderDateBefore,
         lastPageSize: items.length,
         hasMore,
         lastUrl: path,
@@ -316,6 +329,8 @@ export async function POST(request: Request) {
       nextPageURL: continuation,
       modifiedAfter,
       modifiedBefore,
+      orderDateAfter,
+      orderDateBefore,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
