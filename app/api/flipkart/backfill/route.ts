@@ -42,7 +42,29 @@ export async function POST(request: Request) {
   try {
     const user = await getUser();
     const body = await request.json().catch(() => ({}));
-    const action = body?.action === "start" ? "start" : "step";
+    const action = body?.action === "start" ? "start" : body?.action === "status" ? "status" : body?.action === "resume" ? "resume" : "step";
+
+    if (action === "status") {
+      const { data: job, error: jobError } = await supabaseAdmin
+        .from("backfill_jobs")
+        .select("id,status,start_at,end_at,window_days,current_window_start,current_window_end,completed_windows,total_windows,last_error,updated_at,completed_at")
+        .eq("user_id", user.id)
+        .eq("job_key", JOB_KEY)
+        .maybeSingle();
+      if (jobError) throw jobError;
+      if (!job) {
+        return NextResponse.json({ ok: true, status: "not_started" });
+      }
+      const { data: window } = await supabaseAdmin
+        .from("backfill_windows")
+        .select("id,window_start,window_end,status,orders_status,shipments_status,returns_status,last_error")
+        .eq("backfill_job_id", job.id)
+        .neq("status", "completed")
+        .order("window_start", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return NextResponse.json({ ok: true, ...job, currentWindow: window ?? null });
+    }
 
     if (action === "start") {
       const startAt = new Date("2025-03-01T00:00:00+05:30");
@@ -90,6 +112,33 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, action: "started", jobId: job.id, totalWindows: windows.length });
     }
 
+    if (action === "resume") {
+      const { data: job, error: jobError } = await supabaseAdmin
+        .from("backfill_jobs")
+        .select("id,status")
+        .eq("user_id", user.id)
+        .eq("job_key", JOB_KEY)
+        .maybeSingle();
+      if (jobError) throw jobError;
+      if (!job) return NextResponse.json({ ok: false, error: "Historical backfill has not been started." }, { status: 404 });
+      if (job.status === "completed") return NextResponse.json({ ok: true, status: "completed" });
+
+      const now = new Date().toISOString();
+      await supabaseAdmin.from("backfill_jobs").update({
+        status: "running",
+        last_error: null,
+        updated_at: now,
+      }).eq("id", job.id);
+
+      await supabaseAdmin.from("backfill_windows").update({
+        status: "pending",
+        last_error: null,
+        updated_at: now,
+      }).eq("backfill_job_id", job.id).eq("status", "failed");
+
+      return NextResponse.json({ ok: true, action: "resumed", jobId: job.id });
+    }
+
     const { data: job, error: jobError } = await supabaseAdmin
       .from("backfill_jobs")
       .select("*")
@@ -101,6 +150,11 @@ export async function POST(request: Request) {
 
     if (job.status === "completed") {
       return NextResponse.json({ ok: true, status: "completed", completedWindows: job.completed_windows, totalWindows: job.total_windows });
+    }
+
+    if (job.status === "failed") {
+      await supabaseAdmin.from("backfill_jobs").update({ status: "running", last_error: null, updated_at: new Date().toISOString() }).eq("id", job.id);
+      await supabaseAdmin.from("backfill_windows").update({ status: "pending", last_error: null, updated_at: new Date().toISOString() }).eq("backfill_job_id", job.id).eq("status", "failed");
     }
 
     let { data: win, error: winError } = await supabaseAdmin
@@ -137,7 +191,7 @@ export async function POST(request: Request) {
     }).eq("id", win.id);
 
     try {
-      let response: Response;
+      let response: Response | null = null;
       if (stage === "orders") {
         response = await invokeSync(request, "orders", {
           mode: "full",
@@ -181,6 +235,7 @@ export async function POST(request: Request) {
         });
       }
 
+      if (!response) throw new Error(`Unsupported backfill stage: ${stage}`);
       const result = await response.clone().json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error ?? `${stage} backfill failed.`);
 
