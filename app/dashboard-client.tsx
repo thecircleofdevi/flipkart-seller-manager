@@ -160,124 +160,38 @@ export default function DashboardClient(props: Props) {
   const runHistoricalBackfill = async () => {
     if (backfillRunning || syncing) return;
     setBackfillRunning(true);
-    setBackfillMessage(null);
-
-    const storageKey = "flipkart-historical-backfill-v1";
-    const startDate = new Date("2025-03-01T00:00:00+05:30");
-    const endDate = new Date();
-    const windowMs = 7 * 24 * 60 * 60 * 1000;
-    const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}") as { completed?: string[] };
-    const completed = new Set(saved.completed ?? []);
-
-    const windows: Array<{ from: string; to: string; key: string }> = [];
-    for (let cursor = new Date(startDate); cursor < endDate; cursor = new Date(cursor.getTime() + windowMs)) {
-      const to = new Date(Math.min(cursor.getTime() + windowMs, endDate.getTime()));
-      const fromIso = cursor.toISOString();
-      const toIso = to.toISOString();
-      windows.push({ from: fromIso, to: toIso, key: fromIso + "|" + toIso });
-    }
-
-    const runPagedBackfill = async (type: "orders" | "returns", initial: Record<string, unknown>) => {
-      let syncRunId: string | null = null;
-      let cursor = { ...initial };
-      let hasMore = true;
-      while (hasMore) {
-        const response = await fetch("/api/flipkart/sync/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type, ...cursor, ...(syncRunId ? { syncRunId } : {}) }),
-        });
-        const result: Record<string, unknown> = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error((result.error as string) ?? type + " backfill failed");
-        syncRunId = (result.syncRunId as string) ?? syncRunId;
-        hasMore = Boolean(result.hasMore);
-        cursor = {
-          ...cursor,
-          nextUrl: result.nextUrl,
-          nextPageURL: result.nextPageURL,
-          currentSource: result.currentSource,
-          syncRunId,
-        };
-      }
-    };
-
-    const runShipmentWindow = async (from: string, to: string) => {
-      const jobs: Array<{ filterType: "preDispatch" | "postDispatch" | "cancelled"; shipmentType?: "NORMAL" | "SELF" }> = [
-        { filterType: "preDispatch" },
-        { filterType: "postDispatch", shipmentType: "NORMAL" },
-        { filterType: "postDispatch", shipmentType: "SELF" },
-        { filterType: "cancelled" },
-      ];
-
-      for (const job of jobs) {
-        let syncRunId: string | null = null;
-        let nextPageUrl: string | null = null;
-        let hasMore = true;
-        while (hasMore) {
-          const response = await fetch("/api/flipkart/sync/run", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "shipments",
-              ...job,
-              mode: "full",
-              modifiedFrom: from,
-              modifiedTo: to,
-              nextPageUrl,
-              ...(syncRunId ? { syncRunId } : {}),
-            }),
-          });
-          const result: Record<string, unknown> = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error((result.error as string) ?? "Shipment backfill failed");
-          syncRunId = (result.syncRunId as string) ?? syncRunId;
-          nextPageUrl = typeof result.nextPageUrl === "string" ? result.nextPageUrl : null;
-          hasMore = Boolean(result.hasMore);
-        }
-      }
-    };
-
+    setBackfillMessage("Starting historical backfill...");
     try {
-      let completedCount = completed.size;
-      for (const window of windows) {
-        if (completed.has(window.key)) continue;
-
-        setBackfillMessage(`Backfilling ${completedCount + 1}/${windows.length}: ${new Date(window.from).toLocaleDateString("en-IN")} to ${new Date(window.to).toLocaleDateString("en-IN")}`);
-
-        await runPagedBackfill("orders", {
-          mode: "full",
-          dateField: "orderDate",
-          orderDateAfter: window.from,
-          orderDateBefore: window.to,
-        });
-
-        await runShipmentWindow(window.from, window.to);
-
-        await runPagedBackfill("returns", {
-          mode: "full",
-          dateField: "createdDate",
-          createdAfter: window.from,
-          createdBefore: window.to,
-        });
-
-        completed.add(window.key);
-        completedCount++;
-        window.localStorage.setItem(storageKey, JSON.stringify({ completed: [...completed] }));
-      }
-
-      setBackfillMessage(`Historical backfill complete for ${windows.length} windows. Shipment details will now be refreshed.`);
-
-      const detailsResponse = await fetch("/api/flipkart/sync/run", {
+      const startResponse = await fetch("/api/flipkart/backfill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "shipment_details" }),
+        body: JSON.stringify({ action: "start" }),
       });
-      const detailsResult: Record<string, unknown> = await detailsResponse.json().catch(() => ({}));
-      if (!detailsResponse.ok) throw new Error((detailsResult.error as string) ?? "Shipment detail refresh failed");
+      const startResult: Record<string, unknown> = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok) throw new Error((startResult.error as string) ?? "Unable to start historical backfill.");
 
-      window.localStorage.removeItem(storageKey);
-      setBackfillMessage("Historical backfill and shipment detail refresh completed.");
+      let finished = false;
+      while (!finished) {
+        const response = await fetch("/api/flipkart/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "step" }),
+        });
+        const result: Record<string, unknown> = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error((result.error as string) ?? "Historical backfill failed.");
+
+        if (result.status === "completed") {
+          finished = true;
+          setBackfillMessage("Historical backfill completed and shipment details were refreshed.");
+        } else {
+          const stage = String(result.stage ?? "stage").replaceAll("_", " ");
+          const windowStart = result.windowStart ? new Date(String(result.windowStart)).toLocaleDateString("en-IN") : "";
+          const windowEnd = result.windowEnd ? new Date(String(result.windowEnd)).toLocaleDateString("en-IN") : "";
+          setBackfillMessage(`Backfill running: ${stage} · ${windowStart} to ${windowEnd}`);
+        }
+      }
     } catch (error) {
-      setBackfillMessage(error instanceof Error ? error.message : "Historical backfill failed");
+      setBackfillMessage(error instanceof Error ? error.message : "Historical backfill failed.");
     } finally {
       setBackfillRunning(false);
     }
