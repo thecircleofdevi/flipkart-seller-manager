@@ -63,7 +63,10 @@ function assertAuthorized(request: Request) {
 function normalizePaginationUrl(value: string) {
   const url = new URL(value, "https://api.flipkart.net");
   if (url.hostname !== "api.flipkart.net") throw new Error("Flipkart nextPageURL points to an unexpected host.");
-  const pathname = url.pathname.startsWith("/sellers/") ? url.pathname : `/sellers${url.pathname}`;
+  let pathname = url.pathname;
+  if (pathname.startsWith("/sellers/v2/")) return pathname + url.search;
+  if (pathname.startsWith("/sellers/")) pathname = `/sellers/v2${pathname.slice("/sellers".length)}`;
+  else pathname = `/sellers/v2${pathname}`;
   return pathname + url.search;
 }
 
