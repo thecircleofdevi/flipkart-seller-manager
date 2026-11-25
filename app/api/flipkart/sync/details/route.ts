@@ -195,19 +195,28 @@ export async function POST(request: Request) {
     const userId = requiredEnv("FLIPKART_OWNER_USER_ID");
     runId = await claimSyncRun(userId, "shipment_details", "shipment_details");
 
+    const body = await request.json().catch(() => ({}));
+    const requestedIds = Array.isArray(body?.shipmentIds)
+      ? body.shipmentIds.filter((id: unknown): id is string => typeof id === "string" && id.length > 0)
+      : null;
+
     const { data: rows, error: shipmentError } = await supabaseAdmin
       .from("shipments")
       .select("id,flipkart_shipment_id")
       .eq("user_id", userId)
-      .not("flipkart_shipment_id", "is", null);
+      .not("flipkart_shipment_id", "is", null)
+      .order("created_at", { ascending: true });
     if (shipmentError) throw shipmentError;
 
-    const shipments = rows ?? [];
+    const allShipments = rows ?? [];
+    const shipments = requestedIds
+      ? allShipments.filter((row) => requestedIds.includes(row.flipkart_shipment_id))
+      : allShipments;
     let updated = 0;
     let ordersTouched = 0;
     let orderItemsWritten = 0;
 
-    for (let i = 0; i < shipments.length; i += 100) {
+    for (let i = 0; i < shipments.length; i += 25) {
       const batch = shipments.slice(i, i + 100);
       const ids = batch.map((row) => row.flipkart_shipment_id).join(",");
       const result = await requestWithRetry<ShipmentDetailResponse>(`/sellers/v3/shipments/${encodeURIComponent(ids)}`);
@@ -288,6 +297,7 @@ export async function POST(request: Request) {
       ordersTouched,
       orderItemsWritten,
       includesOrderDetails: true,
+      requestedShipmentIds: requestedIds ?? null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown sync error";
