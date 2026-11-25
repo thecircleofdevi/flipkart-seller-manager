@@ -9,7 +9,8 @@ import { POST as runShipmentDetailsSync } from "@/app/api/flipkart/sync/details/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const JOB_KEY = "historical:2025-03-01:present:v2";
+const DEFAULT_JOB_KEY = "historical:2025-03-01:present:v2";
+const STALE_WINDOW_MS = 10 * 60 * 1000;
 const SHIPMENT_FILTERS = [
   { filterType: "preDispatch" as const },
   { filterType: "postDispatch" as const, shipmentType: "NORMAL" as const },
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
   try {
     const user = await getUser();
     const body = await request.json().catch(() => ({}));
+    const jobKey = typeof body?.jobKey === "string" && body.jobKey.trim() ? body.jobKey.trim() : DEFAULT_JOB_KEY;
     const action =
       body?.action === "start" ? "start" :
       body?.action === "status" ? "status" :
@@ -98,7 +100,7 @@ export async function POST(request: Request) {
         .from("backfill_jobs")
         .select("id,status,start_at,end_at,window_days,current_window_start,current_window_end,completed_windows,total_windows,last_error,updated_at,completed_at")
         .eq("user_id", user.id)
-        .eq("job_key", JOB_KEY)
+        .eq("job_key", jobKey)
         .maybeSingle();
       if (jobError) throw jobError;
       if (!job) return NextResponse.json({ ok: true, status: "not_started" });
@@ -116,9 +118,13 @@ export async function POST(request: Request) {
     }
 
     if (action === "start") {
-      const startAt = new Date("2025-03-01T00:00:00+05:30");
-      const endAt = new Date();
-      const windowMs = 7 * 24 * 60 * 60 * 1000;
+      const startAt = new Date(typeof body?.startAt === "string" ? body.startAt : "2025-03-01T00:00:00+05:30");
+      const endAt = new Date(typeof body?.endAt === "string" ? body.endAt : new Date().toISOString());
+      const windowDays = Number.isInteger(body?.windowDays) && body.windowDays > 0 && body.windowDays <= 31 ? body.windowDays : 7;
+      if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || startAt >= endAt) {
+        return NextResponse.json({ ok: false, error: "Invalid backfill range. startAt must be before endAt." }, { status: 400 });
+      }
+      const windowMs = windowDays * 24 * 60 * 60 * 1000;
       const windows: Array<{ start: string; end: string }> = [];
 
       for (let cursor = new Date(startAt); cursor < endAt; cursor = new Date(cursor.getTime() + windowMs)) {
@@ -130,11 +136,11 @@ export async function POST(request: Request) {
         .from("backfill_jobs")
         .upsert({
           user_id: user.id,
-          job_key: JOB_KEY,
+          job_key: jobKey,
           status: "running",
           start_at: startAt.toISOString(),
           end_at: endAt.toISOString(),
-          window_days: 7,
+          window_days: windowDays,
           total_windows: windows.length,
           completed_windows: 0,
           last_error: null,
@@ -201,6 +207,14 @@ export async function POST(request: Request) {
         .eq("status", "failed");
     }
 
+    const staleBefore = new Date(Date.now() - STALE_WINDOW_MS).toISOString();
+    await supabaseAdmin
+      .from("backfill_windows")
+      .update({ status: "pending", last_error: "Recovered stale running window.", updated_at: new Date().toISOString() })
+      .eq("backfill_job_id", job.id)
+      .eq("status", "running")
+      .lt("updated_at", staleBefore);
+
     const { data: candidate, error: candidateError } = await supabaseAdmin
       .from("backfill_windows")
       .select("*")
@@ -245,6 +259,7 @@ export async function POST(request: Request) {
 
     try {
       const metadata = ((win.metadata ?? {}) as BackfillMetadata);
+      await updateJob(job.id, { current_window_start: win.window_start, current_window_end: win.window_end });
 
       if (win.orders_status !== "completed") {
         const response = await invokeSync(request, "orders", {
