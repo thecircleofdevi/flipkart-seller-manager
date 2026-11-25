@@ -63,6 +63,14 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5
 function normalizePath(value: string) {
   const url = new URL(value, "https://api.flipkart.net");
   if (url.hostname !== "api.flipkart.net") throw new Error("Invalid Flipkart pagination URL.");
+
+  // Flipkart's v2 returns endpoint has been observed returning a legacy
+  // pagination path without the /sellers/v2 prefix. The documented endpoint
+  // is /sellers/v2/returns, so normalize only this known pagination shape.
+  if (url.pathname.startsWith("/returns/search/")) {
+    url.pathname = "/sellers/v2" + url.pathname;
+  }
+
   return url.pathname + url.search;
 }
 
