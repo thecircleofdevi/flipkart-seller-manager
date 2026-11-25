@@ -9,7 +9,25 @@ import { POST as runShipmentDetailsSync } from "@/app/api/flipkart/sync/details/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const JOB_KEY = "historical:2025-03-01:present:v1";
+const JOB_KEY = "historical:2025-03-01:present:v2";
+const SHIPMENT_FILTERS = [
+  { filterType: "preDispatch" as const },
+  { filterType: "postDispatch" as const, shipmentType: "NORMAL" as const },
+  { filterType: "postDispatch" as const, shipmentType: "SELF" as const },
+  { filterType: "cancelled" as const },
+];
+
+type BackfillMetadata = {
+  ordersNextPageURL?: string | null;
+  ordersSyncRunId?: string | null;
+  shipmentFilterIndex?: number;
+  shipmentNextPageUrl?: string | null;
+  shipmentSyncRunId?: string | null;
+  pendingShipmentIds?: string[];
+  returnNextUrl?: string | null;
+  returnCurrentSource?: string | null;
+  returnSyncRunId?: string | null;
+};
 
 async function getUser() {
   const supabase = await createClient();
@@ -30,7 +48,11 @@ function internalRequest(url: string, body: Record<string, unknown>) {
   });
 }
 
-async function invokeSync(request: Request, type: "orders" | "shipments" | "returns" | "shipment_details", body: Record<string, unknown>) {
+async function invokeSync(
+  request: Request,
+  type: "orders" | "shipments" | "returns" | "shipment_details",
+  body: Record<string, unknown>,
+) {
   const req = internalRequest(request.url, body);
   if (type === "orders") return runOrderSync(req);
   if (type === "shipments") return runShipmentSync(req);
@@ -38,11 +60,37 @@ async function invokeSync(request: Request, type: "orders" | "shipments" | "retu
   return runShipmentDetailsSync(req);
 }
 
+async function updateWindow(
+  id: string,
+  patch: Record<string, unknown>,
+) {
+  const { error } = await supabaseAdmin
+    .from("backfill_windows")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+async function updateJob(
+  id: string,
+  patch: Record<string, unknown>,
+) {
+  const { error } = await supabaseAdmin
+    .from("backfill_jobs")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
 export async function POST(request: Request) {
   try {
     const user = await getUser();
     const body = await request.json().catch(() => ({}));
-    const action = body?.action === "start" ? "start" : body?.action === "status" ? "status" : body?.action === "resume" ? "resume" : "step";
+    const action =
+      body?.action === "start" ? "start" :
+      body?.action === "status" ? "status" :
+      body?.action === "resume" ? "resume" :
+      "step";
 
     if (action === "status") {
       const { data: job, error: jobError } = await supabaseAdmin
@@ -52,17 +100,17 @@ export async function POST(request: Request) {
         .eq("job_key", JOB_KEY)
         .maybeSingle();
       if (jobError) throw jobError;
-      if (!job) {
-        return NextResponse.json({ ok: true, status: "not_started" });
-      }
+      if (!job) return NextResponse.json({ ok: true, status: "not_started" });
+
       const { data: window } = await supabaseAdmin
         .from("backfill_windows")
-        .select("id,window_start,window_end,status,orders_status,shipments_status,returns_status,last_error")
+        .select("id,window_start,window_end,status,orders_status,shipments_status,returns_status,shipment_details_status,last_error,metadata")
         .eq("backfill_job_id", job.id)
         .neq("status", "completed")
         .order("window_start", { ascending: true })
         .limit(1)
         .maybeSingle();
+
       return NextResponse.json({ ok: true, ...job, currentWindow: window ?? null });
     }
 
@@ -71,6 +119,7 @@ export async function POST(request: Request) {
       const endAt = new Date();
       const windowMs = 7 * 24 * 60 * 60 * 1000;
       const windows: Array<{ start: string; end: string }> = [];
+
       for (let cursor = new Date(startAt); cursor < endAt; cursor = new Date(cursor.getTime() + windowMs)) {
         const end = new Date(Math.min(cursor.getTime() + windowMs, endAt.getTime()));
         windows.push({ start: cursor.toISOString(), end: end.toISOString() });
@@ -105,38 +154,12 @@ export async function POST(request: Request) {
           shipments_status: "pending",
           returns_status: "pending",
           shipment_details_status: "pending",
+          metadata: {},
         })),
       );
       if (windowError) throw windowError;
 
       return NextResponse.json({ ok: true, action: "started", jobId: job.id, totalWindows: windows.length });
-    }
-
-    if (action === "resume") {
-      const { data: job, error: jobError } = await supabaseAdmin
-        .from("backfill_jobs")
-        .select("id,status")
-        .eq("user_id", user.id)
-        .eq("job_key", JOB_KEY)
-        .maybeSingle();
-      if (jobError) throw jobError;
-      if (!job) return NextResponse.json({ ok: false, error: "Historical backfill has not been started." }, { status: 404 });
-      if (job.status === "completed") return NextResponse.json({ ok: true, status: "completed" });
-
-      const now = new Date().toISOString();
-      await supabaseAdmin.from("backfill_jobs").update({
-        status: "running",
-        last_error: null,
-        updated_at: now,
-      }).eq("id", job.id);
-
-      await supabaseAdmin.from("backfill_windows").update({
-        status: "pending",
-        last_error: null,
-        updated_at: now,
-      }).eq("backfill_job_id", job.id).eq("status", "failed");
-
-      return NextResponse.json({ ok: true, action: "resumed", jobId: job.id });
     }
 
     const { data: job, error: jobError } = await supabaseAdmin
@@ -148,13 +171,33 @@ export async function POST(request: Request) {
     if (jobError) throw jobError;
     if (!job) return NextResponse.json({ ok: false, error: "Historical backfill has not been started." }, { status: 404 });
 
+    if (action === "resume") {
+      if (job.status === "completed") return NextResponse.json({ ok: true, status: "completed" });
+
+      await updateJob(job.id, { status: "running", last_error: null });
+      await supabaseAdmin.from("backfill_windows")
+        .update({ status: "pending", last_error: null, updated_at: new Date().toISOString() })
+        .eq("backfill_job_id", job.id)
+        .eq("status", "failed");
+
+      return NextResponse.json({ ok: true, action: "resumed", jobId: job.id });
+    }
+
     if (job.status === "completed") {
-      return NextResponse.json({ ok: true, status: "completed", completedWindows: job.completed_windows, totalWindows: job.total_windows });
+      return NextResponse.json({
+        ok: true,
+        status: "completed",
+        completedWindows: job.completed_windows,
+        totalWindows: job.total_windows,
+      });
     }
 
     if (job.status === "failed") {
-      await supabaseAdmin.from("backfill_jobs").update({ status: "running", last_error: null, updated_at: new Date().toISOString() }).eq("id", job.id);
-      await supabaseAdmin.from("backfill_windows").update({ status: "pending", last_error: null, updated_at: new Date().toISOString() }).eq("backfill_job_id", job.id).eq("status", "failed");
+      await updateJob(job.id, { status: "running", last_error: null });
+      await supabaseAdmin.from("backfill_windows")
+        .update({ status: "pending", last_error: null, updated_at: new Date().toISOString() })
+        .eq("backfill_job_id", job.id)
+        .eq("status", "failed");
     }
 
     const { data: candidate, error: candidateError } = await supabaseAdmin
@@ -168,37 +211,29 @@ export async function POST(request: Request) {
     if (candidateError) throw candidateError;
 
     if (!candidate) {
-      const detailResponse = await invokeSync(request, "shipment_details", {});
-      const detailResult = await detailResponse.clone().json().catch(() => ({}));
-      if (!detailResponse.ok) throw new Error(detailResult.error ?? "Shipment detail refresh failed.");
-      await supabaseAdmin.from("backfill_jobs").update({
+      await updateJob(job.id, {
         status: "completed",
         completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
         last_error: null,
-      }).eq("id", job.id);
-      return NextResponse.json({ ok: true, status: "completed", completedWindows: job.completed_windows, totalWindows: job.total_windows, shipmentDetailsRefreshed: true });
+      });
+      return NextResponse.json({
+        ok: true,
+        status: "completed",
+        completedWindows: job.total_windows,
+        totalWindows: job.total_windows,
+      });
     }
-
-    const stage =
-      candidate.orders_status !== "completed" ? "orders" :
-      candidate.shipments_status !== "completed" ? "shipments" :
-      "returns";
 
     const claimTime = new Date().toISOString();
     const { data: win, error: claimError } = await supabaseAdmin
       .from("backfill_windows")
-      .update({
-        status: "running",
-        updated_at: claimTime,
-      })
+      .update({ status: "running", updated_at: claimTime })
       .eq("id", candidate.id)
       .in("status", ["pending", "failed"])
       .select("*")
       .maybeSingle();
 
     if (claimError) throw claimError;
-
     if (!win) {
       return NextResponse.json({
         ok: true,
@@ -208,70 +243,156 @@ export async function POST(request: Request) {
     }
 
     try {
-      let response: Response | null = null;
-      if (stage === "orders") {
-        response = await invokeSync(request, "orders", {
+      const metadata = ((win.metadata ?? {}) as BackfillMetadata);
+
+      if (win.orders_status !== "completed") {
+        const response = await invokeSync(request, "orders", {
           mode: "full",
           dateField: "orderDate",
           orderDateAfter: win.window_start,
           orderDateBefore: win.window_end,
+          ...(metadata.ordersSyncRunId ? { syncRunId: metadata.ordersSyncRunId } : {}),
+          ...(metadata.ordersNextPageURL ? { nextPageURL: metadata.ordersNextPageURL } : {}),
         });
-      } else if (stage === "shipments") {
-        response = await invokeSync(request, "shipments", {
+        const result = await response.clone().json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error ?? "Orders backfill failed.");
+
+        const nextMetadata: BackfillMetadata = {
+          ...metadata,
+          ordersSyncRunId: result.syncRunId ?? metadata.ordersSyncRunId ?? null,
+          ordersNextPageURL: result.hasMore ? result.nextPageURL : null,
+        };
+
+        if (result.hasMore) {
+          await updateWindow(win.id, { metadata: nextMetadata });
+          return NextResponse.json({ ok: true, status: "running", stage: "orders", windowStart: win.window_start, windowEnd: win.window_end, result });
+        }
+
+        await updateWindow(win.id, {
+          orders_status: "completed",
+          metadata: { ...nextMetadata, ordersNextPageURL: null },
+        });
+        return NextResponse.json({ ok: true, status: "running", stage: "orders", windowStart: win.window_start, windowEnd: win.window_end, result });
+      }
+
+      if (win.shipments_status !== "completed") {
+        const filterIndex = Number.isInteger(metadata.shipmentFilterIndex) ? metadata.shipmentFilterIndex! : 0;
+        const filter = SHIPMENT_FILTERS[filterIndex];
+
+        if (!filter) {
+          await updateWindow(win.id, {
+            shipments_status: "completed",
+            shipment_details_status: "completed",
+            metadata: { ...metadata, shipmentFilterIndex: SHIPMENT_FILTERS.length, shipmentNextPageUrl: null, shipmentSyncRunId: null, pendingShipmentIds: [] },
+          });
+          return NextResponse.json({ ok: true, status: "running", stage: "shipments", windowStart: win.window_start, windowEnd: win.window_end, message: "All shipment filters completed." });
+        }
+
+        const pendingIds = metadata.pendingShipmentIds ?? [];
+        let result: any = null;
+
+        if (pendingIds.length > 0) {
+          const detailResponse = await invokeSync(request, "shipment_details", { shipmentIds: pendingIds });
+          const detailResult = await detailResponse.clone().json().catch(() => ({}));
+          if (!detailResponse.ok) throw new Error(detailResult.error ?? "Shipment detail batch failed.");
+
+          await updateWindow(win.id, { metadata: { ...metadata, pendingShipmentIds: [] } });
+          return NextResponse.json({ ok: true, status: "running", stage: "shipment_details", windowStart: win.window_start, windowEnd: win.window_end, result: detailResult });
+        }
+
+        result = await invokeSync(request, "shipments", {
           mode: "full",
-          filterType: "preDispatch",
+          filterType: filter.filterType,
+          ...(filter.shipmentType ? { shipmentType: filter.shipmentType } : {}),
           modifiedFrom: win.window_start,
           modifiedTo: win.window_end,
+          ...(metadata.shipmentSyncRunId ? { syncRunId: metadata.shipmentSyncRunId } : {}),
+          ...(metadata.shipmentNextPageUrl ? { nextPageUrl: metadata.shipmentNextPageUrl } : {}),
         });
-        if (response.ok) {
-          for (const shipmentType of ["NORMAL", "SELF"]) {
-            response = await invokeSync(request, "shipments", {
-              mode: "full",
-              filterType: "postDispatch",
-              shipmentType,
-              modifiedFrom: win.window_start,
-              modifiedTo: win.window_end,
-            });
-            if (!response.ok) break;
-          }
-        }
-        if (response.ok) {
-          response = await invokeSync(request, "shipments", {
-            mode: "full",
-            filterType: "cancelled",
-            modifiedFrom: win.window_start,
-            modifiedTo: win.window_end,
+        const shipmentResult = await result.clone().json().catch(() => ({}));
+        if (!result.ok) throw new Error(shipmentResult.error ?? "Shipment backfill failed.");
+
+        const shipmentIds = Array.isArray(shipmentResult.shipmentIds)
+          ? shipmentResult.shipmentIds.filter((id: unknown): id is string => typeof id === "string")
+          : [];
+
+        if (shipmentIds.length > 0) {
+          await updateWindow(win.id, {
+            metadata: {
+              ...metadata,
+              pendingShipmentIds: shipmentIds,
+              shipmentNextPageUrl: shipmentResult.hasMore ? shipmentResult.nextPageUrl : null,
+              shipmentSyncRunId: shipmentResult.syncRunId ?? metadata.shipmentSyncRunId ?? null,
+            },
           });
+          return NextResponse.json({ ok: true, status: "running", stage: "shipment_details", windowStart: win.window_start, windowEnd: win.window_end, result: shipmentResult });
         }
-      } else if (stage === "returns") {
-        response = await invokeSync(request, "returns", {
+
+        const nextIndex = filterIndex + 1;
+        await updateWindow(win.id, {
+          metadata: {
+            ...metadata,
+            shipmentFilterIndex: nextIndex,
+            shipmentNextPageUrl: shipmentResult.hasMore ? shipmentResult.nextPageUrl : null,
+            shipmentSyncRunId: shipmentResult.hasMore ? (shipmentResult.syncRunId ?? metadata.shipmentSyncRunId ?? null) : null,
+          },
+        });
+
+        return NextResponse.json({ ok: true, status: "running", stage: "shipments", windowStart: win.window_start, windowEnd: win.window_end, result: shipmentResult });
+      }
+
+      if (win.returns_status !== "completed") {
+        const response = await invokeSync(request, "returns", {
           mode: "full",
           dateField: "createdDate",
           createdAfter: win.window_start,
           createdBefore: win.window_end,
+          ...(metadata.returnSyncRunId ? { syncRunId: metadata.returnSyncRunId } : {}),
+          ...(metadata.returnNextUrl ? { nextUrl: metadata.returnNextUrl } : {}),
+          ...(metadata.returnCurrentSource ? { currentSource: metadata.returnCurrentSource } : {}),
+        });
+        const result = await response.clone().json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error ?? "Returns backfill failed.");
+
+        const nextMetadata: BackfillMetadata = {
+          ...metadata,
+          returnSyncRunId: result.syncRunId ?? metadata.returnSyncRunId ?? null,
+          returnNextUrl: result.nextUrl ?? null,
+          returnCurrentSource: result.currentSource ?? metadata.returnCurrentSource ?? "customer_return",
+        };
+
+        if (result.hasMore) {
+          await updateWindow(win.id, { metadata: nextMetadata });
+          return NextResponse.json({ ok: true, status: "running", stage: "returns", windowStart: win.window_start, windowEnd: win.window_end, result });
+        }
+
+        const nextCompletedWindows = (job.completed_windows ?? 0) + 1;
+        await updateWindow(win.id, {
+          returns_status: "completed",
+          status: "completed",
+          shipment_details_status: "completed",
+          completed_at: new Date().toISOString(),
+          metadata: nextMetadata,
+        });
+        await updateJob(job.id, { completed_windows: nextCompletedWindows });
+
+        return NextResponse.json({
+          ok: true,
+          status: "running",
+          stage: "returns",
+          windowStart: win.window_start,
+          windowEnd: win.window_end,
+          result,
+          completedWindows: nextCompletedWindows,
+          totalWindows: job.total_windows,
         });
       }
 
-      if (!response) throw new Error(`Unsupported backfill stage: ${stage}`);
-      const result = await response.clone().json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error ?? `${stage} backfill failed.`);
-
-      if (stage === "orders") {
-        await supabaseAdmin.from("backfill_windows").update({ orders_status: "completed", status: "running", updated_at: new Date().toISOString() }).eq("id", win.id);
-      } else if (stage === "shipments") {
-        await supabaseAdmin.from("backfill_windows").update({ shipments_status: "completed", status: "running", updated_at: new Date().toISOString() }).eq("id", win.id);
-      } else if (stage === "returns") {
-        await supabaseAdmin.from("backfill_windows").update({ returns_status: "completed", status: "running", updated_at: new Date().toISOString() }).eq("id", win.id);
-      } else {
-        await supabaseAdmin.from("backfill_windows").update({ returns_status: "completed", status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", win.id);
-        await supabaseAdmin.from("backfill_jobs").update({ completed_windows: job.completed_windows + 1, updated_at: new Date().toISOString() }).eq("id", job.id);
-      }
-
-      return NextResponse.json({ ok: true, status: "running", stage, windowStart: win.window_start, windowEnd: win.window_end, result });
+      throw new Error("Backfill window reached an invalid state.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Backfill stage failed.";
-      await supabaseAdmin.from("backfill_windows").update({ status: "failed", last_error: message, updated_at: new Date().toISOString() }).eq("id", win.id);
-      await supabaseAdmin.from("backfill_jobs").update({ status: "failed", last_error: message, updated_at: new Date().toISOString() }).eq("id", job.id);
+      await updateWindow(win.id, { status: "failed", last_error: message });
+      await updateJob(job.id, { status: "failed", last_error: message });
       throw error;
     }
   } catch (error) {
