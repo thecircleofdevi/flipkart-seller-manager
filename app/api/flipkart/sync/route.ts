@@ -598,20 +598,36 @@ export async function POST(request: Request) {
           shipmentCount: shipments.length,
           hasMore: result.data.hasMore ?? false,
           hasNextPageUrl: Boolean(result.data.nextPageUrl),
+          pageMethod: isFirstPage ? "POST" : "GET",
+          pagePath: requestPath,
         },
       });
 
     if (apiLogError) throw apiLogError;
 
-    for (const shipment of shipments) {
-      await upsertShipmentGraph(userId, shipmentRunId, shipment);
-      totalWritten++;
+    // The Flipkart API caps each page at 20 records. Persist the page in
+    // bounded parallel batches instead of serially processing every shipment.
+    // The graph upsert still preserves its dependency order within a shipment.
+    const writeConcurrency = 4;
+    for (let offset = 0; offset < shipments.length; offset += writeConcurrency) {
+      const batch = shipments.slice(offset, offset + writeConcurrency);
+      const results = await Promise.all(
+        batch.map((shipment) => upsertShipmentGraph(userId, shipmentRunId, shipment)),
+      );
+      totalWritten += results.length;
     }
 
-    const hasMore = Boolean(result.data.hasMore && result.data.nextPageUrl);
+    const rawNextPageUrl = result.data.nextPageUrl ?? null;
+    const hasMore = Boolean(result.data.hasMore);
     const continuationUrl = hasMore
-      ? normalizeFlipkartPath(result.data.nextPageUrl!)
+      ? normalizeFlipkartPath(rawNextPageUrl ?? (() => {
+          throw new Error("Flipkart indicated more shipment pages but did not provide nextPageUrl.");
+        })())
       : null;
+
+    if (hasMore && continuationUrl === requestPath) {
+      throw new Error("Flipkart returned the same nextPageUrl as the current shipment page.");
+    }
 
     const { error: progressError } = await supabaseAdmin
       .from("sync_runs")
@@ -629,6 +645,9 @@ export async function POST(request: Request) {
           modifiedTo: modifiedTo.toISOString(),
           lastPageSize: shipments.length,
           hasMore,
+          pageMethod: isFirstPage ? "POST" : "GET",
+          pagePath: requestPath,
+          nextPageUrl: continuationUrl,
         },
       })
       .eq("id", runId)
