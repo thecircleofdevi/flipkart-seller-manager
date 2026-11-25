@@ -173,7 +173,7 @@ export async function POST(request: Request) {
       .from("backfill_jobs")
       .select("*")
       .eq("user_id", user.id)
-      .eq("job_key", JOB_KEY)
+      .eq("job_key", jobKey)
       .maybeSingle();
     if (jobError) throw jobError;
     if (!job) return NextResponse.json({ ok: false, error: "Historical backfill has not been started." }, { status: 404 });
