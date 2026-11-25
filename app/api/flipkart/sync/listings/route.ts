@@ -181,6 +181,39 @@ async function upsertListing(userId: string, runId: string, sku: string, listing
   if (rawError) throw rawError;
 }
 
+async function processDetailBatch(
+  userId: string,
+  runId: string,
+  batch: string[],
+) {
+  const detailResult = await requestWithRetry<DetailResponse>("/sellers/listings/v3/details", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sku_ids: batch }),
+  });
+
+  let written = 0;
+  for (const [sku, listing] of Object.entries(detailResult.data.available ?? {})) {
+    await upsertListing(userId, runId, sku, listing);
+    written++;
+  }
+
+  const { error: rawError } = await supabaseAdmin.from("raw_flipkart_payloads").upsert({
+    user_id: userId,
+    sync_run_id: runId,
+    source_type: "listing_details_batch",
+    external_id: batch.join(","),
+    payload: detailResult.data,
+  }, { onConflict: "user_id,source_type,external_id,payload_hash" });
+  if (rawError) throw rawError;
+
+  return {
+    written,
+    unavailable: detailResult.data.unavailable?.length ?? 0,
+    invalid: detailResult.data.invalid?.length ?? 0,
+  };
+}
+
 export async function POST(request: Request) {
   let runId: string | null = null;
   try {
@@ -239,31 +272,20 @@ export async function POST(request: Request) {
       }, { onConflict: "user_id,source_type,external_id,payload_hash" });
     }
 
-    const batch = pending.slice(0, 10);
-    const remaining = pending.slice(10);
-
-    if (batch.length) {
-      const detailResult = await requestWithRetry<DetailResponse>("/sellers/listings/v3/details", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku_ids: batch }),
-      });
-
-      for (const [sku, listing] of Object.entries(detailResult.data.available ?? {})) {
-        await upsertListing(userId, listingRunId, sku, listing);
-        written++;
-      }
-
-      await supabaseAdmin.from("raw_flipkart_payloads").upsert({
-        user_id: userId,
-        sync_run_id: runId,
-        source_type: "listing_details_batch",
-        external_id: batch.join(","),
-        payload: detailResult.data,
-      }, { onConflict: "user_id,source_type,external_id,payload_hash" });
+    const batches: string[][] = [];
+    for (let i = 0; i < pending.length; i += 10) {
+      batches.push(pending.slice(i, i + 10));
     }
 
-    const hasMore = remaining.length > 0 || nextPageId !== null;
+    const batchResults = await Promise.all(
+      batches.map((batch) => processDetailBatch(userId, listingRunId, batch)),
+    );
+
+    written += batchResults.reduce((sum, result) => sum + result.written, 0);
+    const unavailable = batchResults.reduce((sum, result) => sum + result.unavailable, 0);
+    const invalid = batchResults.reduce((sum, result) => sum + result.invalid, 0);
+
+    const hasMore = nextPageId !== null;
     const complete = !hasMore;
 
     const { error: progressError } = await supabaseAdmin.from("sync_runs").update({
@@ -275,8 +297,10 @@ export async function POST(request: Request) {
       metadata: {
         mode: "paged",
         pageId: nextPageId,
-        pendingSkuIds: remaining,
-        lastBatchSize: batch.length,
+        lastBatchCount: batches.length,
+        lastBatchSize: batches.length ? Math.max(...batches.map((batch) => batch.length)) : 0,
+        unavailable,
+        invalid,
         hasMore,
       },
     }).eq("id", listingRunId).eq("user_id", userId);
@@ -286,22 +310,24 @@ export async function POST(request: Request) {
       ok: true,
       syncRunId: listingRunId,
       pageId: nextPageId,
-      pendingSkuIds: remaining,
+      pendingSkuIds: [],
       hasMore,
       listingsSeen: seen,
       listingsWritten: written,
+      unavailable,
+      invalid,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown sync error";
-    if (error instanceof SyncAlreadyRunningError) {
-      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
-    }
+    const message = error instanceof Error ? error.message : String(error);
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
         status: "failed",
         finished_at: new Date().toISOString(),
         error_message: message,
       }).eq("id", runId);
+    }
+    if (error instanceof SyncAlreadyRunningError) {
+      return NextResponse.json({ ok: false, error: message, syncRunId: error.syncRunId }, { status: 409 });
     }
     return NextResponse.json({ ok: false, error: message }, { status: message === "Unauthorized sync request." ? 401 : 500 });
   }
