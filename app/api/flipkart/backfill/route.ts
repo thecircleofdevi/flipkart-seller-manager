@@ -337,15 +337,26 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true, status: "running", stage: "shipment_details", windowStart: win.window_start, windowEnd: win.window_end, result: shipmentResult });
         }
 
-        const nextIndex = filterIndex + 1;
-        await updateWindow(win.id, {
-          metadata: {
-            ...metadata,
-            shipmentFilterIndex: nextIndex,
-            shipmentNextPageUrl: shipmentResult.hasMore ? shipmentResult.nextPageUrl : null,
-            shipmentSyncRunId: shipmentResult.hasMore ? (shipmentResult.syncRunId ?? metadata.shipmentSyncRunId ?? null) : null,
-          },
-        });
+        if (shipmentResult.hasMore) {
+          await updateWindow(win.id, {
+            metadata: {
+              ...metadata,
+              shipmentNextPageUrl: shipmentResult.nextPageUrl,
+              shipmentSyncRunId: shipmentResult.syncRunId ?? metadata.shipmentSyncRunId ?? null,
+              shipmentPageComplete: false,
+            },
+          });
+        } else {
+          await updateWindow(win.id, {
+            metadata: {
+              ...metadata,
+              shipmentFilterIndex: filterIndex + 1,
+              shipmentNextPageUrl: null,
+              shipmentSyncRunId: null,
+              shipmentPageComplete: false,
+            },
+          });
+        }
 
         return NextResponse.json({ ok: true, status: "running", stage: "shipments", windowStart: win.window_start, windowEnd: win.window_end, result: shipmentResult });
       }
