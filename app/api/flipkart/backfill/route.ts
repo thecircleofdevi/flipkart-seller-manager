@@ -129,8 +129,7 @@ export async function POST(request: Request) {
     const stage =
       win.orders_status !== "completed" ? "orders" :
       win.shipments_status !== "completed" ? "shipments" :
-      win.returns_status !== "completed" ? "returns" :
-      "shipment_details";
+      "returns";
 
     await supabaseAdmin.from("backfill_windows").update({
       status: "running",
@@ -180,8 +179,6 @@ export async function POST(request: Request) {
           createdAfter: win.window_start,
           createdBefore: win.window_end,
         });
-      } else {
-        response = await invokeSync(request, "shipment_details", {});
       }
 
       const result = await response.clone().json().catch(() => ({}));
@@ -194,7 +191,7 @@ export async function POST(request: Request) {
       } else if (stage === "returns") {
         await supabaseAdmin.from("backfill_windows").update({ returns_status: "completed", status: "running", updated_at: new Date().toISOString() }).eq("id", win.id);
       } else {
-        await supabaseAdmin.from("backfill_windows").update({ shipment_details_status: "completed", status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", win.id);
+        await supabaseAdmin.from("backfill_windows").update({ returns_status: "completed", status: "completed", completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", win.id);
         await supabaseAdmin.from("backfill_jobs").update({ completed_windows: job.completed_windows + 1, updated_at: new Date().toISOString() }).eq("id", job.id);
       }
 
