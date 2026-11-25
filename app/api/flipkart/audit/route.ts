@@ -184,7 +184,7 @@ async function relationCountOrNull(table: string, fk1: string, parent1: string, 
   if (p2.error) throw p2.error;
   const e1 = new Set((p1.data ?? []).map((r: any) => r.id));
   const e2 = new Set((p2.data ?? []).map((r: any) => r.id));
-  for (const row of data ?? []) if ((row[fk1] && !e1.has(row[fk1])) || (row[fk2] && !e2.has(row[fk2]))) missing++;
+  const rows: any[] = (data ?? []) as any[];\n  for (const row of rows) if ((row[fk1] && !e1.has(row[fk1])) || (row[fk2] && !e2.has(row[fk2]))) missing++;
   return missing;
 }
 
