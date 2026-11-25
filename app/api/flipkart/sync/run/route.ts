@@ -5,6 +5,7 @@ import { POST as runListingSync } from "@/app/api/flipkart/sync/listings/route";
 import { POST as runShipmentDetailsSync } from "@/app/api/flipkart/sync/details/route";
 import { POST as runReturnsSync } from "@/app/api/flipkart/sync/returns/route";
 import { POST as runProductSearchSync } from "@/app/api/flipkart/sync/product-search/route";
+import { POST as runOrderSync } from "@/app/api/flipkart/sync/orders/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const type = body?.type;
 
-  if (!["shipments", "shipment_details", "returns", "listings", "product_search"].includes(type)) {
+  if (!["shipments", "shipment_details", "orders", "returns", "listings", "product_search"].includes(type)) {
     return NextResponse.json(
       { ok: false, error: "Invalid sync type" },
       { status: 400 },
@@ -64,6 +65,8 @@ export async function POST(request: Request) {
         ? await runShipmentDetailsSync(internalRequest)
         : type === "returns"
           ? await runReturnsSync(internalRequest)
+          : type === "orders"
+            ? await runOrderSync(internalRequest)
           : type === "product_search"
             ? await runProductSearchSync(internalRequest)
             : await runShipmentSync(internalRequest);
