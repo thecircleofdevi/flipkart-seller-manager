@@ -61,6 +61,8 @@ export default function DashboardClient(props: Props) {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncStage, setSyncStage] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<{ status: string; elapsedSeconds: number; estimatedTotalSeconds: number; recordsWritten: number } | null>(null);
+  const [backfillRunning, setBackfillRunning] = useState(false);
+  const [backfillMessage, setBackfillMessage] = useState<string | null>(null);
   function openShipmentLabels(shipmentId: string) {
     window.location.href = "/labels?shipmentIds=" + encodeURIComponent(shipmentId);
   }
@@ -154,6 +156,132 @@ export default function DashboardClient(props: Props) {
   useEffect(() => {
     setOrderPage(1);
   }, [query]);
+
+  const runHistoricalBackfill = async () => {
+    if (backfillRunning || syncing) return;
+    setBackfillRunning(true);
+    setBackfillMessage(null);
+
+    const storageKey = "flipkart-historical-backfill-v1";
+    const startDate = new Date("2025-03-01T00:00:00+05:30");
+    const endDate = new Date();
+    const windowMs = 7 * 24 * 60 * 60 * 1000;
+    const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}") as { completed?: string[] };
+    const completed = new Set(saved.completed ?? []);
+
+    const windows: Array<{ from: string; to: string; key: string }> = [];
+    for (let cursor = new Date(startDate); cursor < endDate; cursor = new Date(cursor.getTime() + windowMs)) {
+      const to = new Date(Math.min(cursor.getTime() + windowMs, endDate.getTime()));
+      const fromIso = cursor.toISOString();
+      const toIso = to.toISOString();
+      windows.push({ from: fromIso, to: toIso, key: fromIso + "|" + toIso });
+    }
+
+    const runPagedBackfill = async (type: "orders" | "returns", initial: Record<string, unknown>) => {
+      let syncRunId: string | null = null;
+      let cursor = { ...initial };
+      let hasMore = true;
+      while (hasMore) {
+        const response = await fetch("/api/flipkart/sync/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type, ...cursor, ...(syncRunId ? { syncRunId } : {}) }),
+        });
+        const result: Record<string, unknown> = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error((result.error as string) ?? type + " backfill failed");
+        syncRunId = (result.syncRunId as string) ?? syncRunId;
+        hasMore = Boolean(result.hasMore);
+        cursor = {
+          ...cursor,
+          nextUrl: result.nextUrl,
+          nextPageURL: result.nextPageURL,
+          currentSource: result.currentSource,
+          syncRunId,
+        };
+      }
+    };
+
+    const runShipmentWindow = async (from: string, to: string) => {
+      const jobs: Array<{ filterType: "preDispatch" | "postDispatch" | "cancelled"; shipmentType?: "NORMAL" | "SELF" }> = [
+        { filterType: "preDispatch" },
+        { filterType: "postDispatch", shipmentType: "NORMAL" },
+        { filterType: "postDispatch", shipmentType: "SELF" },
+        { filterType: "cancelled" },
+      ];
+
+      for (const job of jobs) {
+        let syncRunId: string | null = null;
+        let nextPageUrl: string | null = null;
+        let hasMore = true;
+        while (hasMore) {
+          const response = await fetch("/api/flipkart/sync/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "shipments",
+              ...job,
+              mode: "full",
+              modifiedFrom: from,
+              modifiedTo: to,
+              nextPageUrl,
+              ...(syncRunId ? { syncRunId } : {}),
+            }),
+          });
+          const result: Record<string, unknown> = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error((result.error as string) ?? "Shipment backfill failed");
+          syncRunId = (result.syncRunId as string) ?? syncRunId;
+          nextPageUrl = typeof result.nextPageUrl === "string" ? result.nextPageUrl : null;
+          hasMore = Boolean(result.hasMore);
+        }
+      }
+    };
+
+    try {
+      let completedCount = completed.size;
+      for (const window of windows) {
+        if (completed.has(window.key)) continue;
+
+        setBackfillMessage(`Backfilling ${completedCount + 1}/${windows.length}: ${new Date(window.from).toLocaleDateString("en-IN")} to ${new Date(window.to).toLocaleDateString("en-IN")}`);
+
+        await runPagedBackfill("orders", {
+          mode: "full",
+          dateField: "orderDate",
+          orderDateAfter: window.from,
+          orderDateBefore: window.to,
+        });
+
+        await runShipmentWindow(window.from, window.to);
+
+        await runPagedBackfill("returns", {
+          mode: "full",
+          dateField: "createdDate",
+          createdAfter: window.from,
+          createdBefore: window.to,
+        });
+
+        completed.add(window.key);
+        completedCount++;
+        window.localStorage.setItem(storageKey, JSON.stringify({ completed: [...completed] }));
+      }
+
+      setBackfillMessage(`Historical backfill complete for ${windows.length} windows. Shipment details will now be refreshed.`);
+
+      const detailsResponse = await fetch("/api/flipkart/sync/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "shipment_details" }),
+      });
+      const detailsResult: Record<string, unknown> = await detailsResponse.json().catch(() => ({}));
+      if (!detailsResponse.ok) throw new Error((detailsResult.error as string) ?? "Shipment detail refresh failed");
+
+      window.localStorage.removeItem(storageKey);
+      setBackfillMessage("Historical backfill and shipment detail refresh completed.");
+    } catch (error) {
+      setBackfillMessage(error instanceof Error ? error.message : "Historical backfill failed");
+    } finally {
+      setBackfillRunning(false);
+    }
+  };
 
   useEffect(() => {
     if (!syncing) return;
@@ -758,7 +886,7 @@ export default function DashboardClient(props: Props) {
                 </div>
               </div>) : <div className="empty big">No shipments match your search.</div>}
             </div>}
-            {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "all" ? "Syncing all marketplace data" : "Syncing marketplace data"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing)} onClick={runSync}>{syncing === "all" ? "Syncing all data..." : "Sync all data"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
+            {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "all" ? "Syncing all marketplace data" : "Syncing marketplace data"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing)} onClick={runSync}>{syncing === "all" ? "Syncing all data..." : "Sync all data"}</button><button className="text-button" disabled={Boolean(syncing) || backfillRunning} onClick={runHistoricalBackfill}>{backfillRunning ? "Backfilling history..." : "Backfill history from Mar 2025"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
             {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><div style={{display:"flex",alignItems:"center",gap:8}}><span>{remoteOrderTotal} records · page {orderPage} / {Math.max(1, Math.ceil(remoteOrderTotal / pageSize))}{orderSearchLoading ? " · loading…" : ""}</span><button className="text-button" disabled={orderPage <= 1 || orderSearchLoading} onClick={() => setOrderPage((p) => Math.max(1, p - 1))}>Previous</button><button className="text-button" disabled={orderPage >= Math.max(1, Math.ceil(remoteOrderTotal / pageSize)) || orderSearchLoading} onClick={() => setOrderPage((p) => p + 1)}>Next</button></div></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
             {active === "labels" && <div className="empty-state"><div className="empty-orb">▣</div><h3>Label Workspace</h3><p>Open the dedicated 4×6 thermal label workspace to crop, save presets, process multiple PDFs and prepare a print-ready batch.</p><a className="primary-button" href="/labels">Open Label Workspace</a></div>}
             {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} records · page {listingPage} / {Math.max(1, Math.ceil(filteredListings.length / pageSize))}</span></div>{visibleListings.length ? visibleListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span><div style={{display:"flex",gap:6,marginLeft:"auto"}}>{l.sku && <><button className="text-button" onClick={() => updateInventory(l.sku!)}>Stock</button><button className="text-button" onClick={() => updatePrice(l.sku!)}>Price</button></>}</div></div>) : <div className="empty big">No listings match your search.</div>}</div>}
