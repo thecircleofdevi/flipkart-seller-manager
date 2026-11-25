@@ -24,6 +24,7 @@ type BackfillMetadata = {
   shipmentNextPageUrl?: string | null;
   shipmentSyncRunId?: string | null;
   pendingShipmentIds?: string[];
+  shipmentPageComplete?: boolean;
   returnNextUrl?: string | null;
   returnCurrentSource?: string | null;
   returnSyncRunId?: string | null;
@@ -296,7 +297,14 @@ export async function POST(request: Request) {
           const detailResult = await detailResponse.clone().json().catch(() => ({}));
           if (!detailResponse.ok) throw new Error(detailResult.error ?? "Shipment detail batch failed.");
 
-          await updateWindow(win.id, { metadata: { ...metadata, pendingShipmentIds: [] } });
+          const detailMetadata: BackfillMetadata = { ...metadata, pendingShipmentIds: [] };
+          if (metadata.shipmentPageComplete) {
+            detailMetadata.shipmentFilterIndex = filterIndex + 1;
+            detailMetadata.shipmentNextPageUrl = null;
+            detailMetadata.shipmentSyncRunId = null;
+            detailMetadata.shipmentPageComplete = false;
+          }
+          await updateWindow(win.id, { metadata: detailMetadata });
           return NextResponse.json({ ok: true, status: "running", stage: "shipment_details", windowStart: win.window_start, windowEnd: win.window_end, result: detailResult });
         }
 
