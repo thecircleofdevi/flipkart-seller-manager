@@ -126,8 +126,8 @@ export async function POST(request: Request) {
     const shipments = rows ?? [];
     let updated = 0;
 
-    for (let i = 0; i < shipments.length; i += 25) {
-      const batch = shipments.slice(i, i + 25);
+    for (let i = 0; i < shipments.length; i += 100) {
+      const batch = shipments.slice(i, i + 100);
       const ids = batch.map((row) => row.flipkart_shipment_id).join(",");
       const result = await requestWithRetry<ShipmentDetailResponse>(
         `/sellers/v3/shipments/${encodeURIComponent(ids)}`,
