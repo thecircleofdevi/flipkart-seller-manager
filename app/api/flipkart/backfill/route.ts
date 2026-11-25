@@ -401,7 +401,6 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true, status: "running", stage: "returns", windowStart: win.window_start, windowEnd: win.window_end, result });
         }
 
-        const nextCompletedWindows = (job.completed_windows ?? 0) + 1;
         await updateWindow(win.id, {
           returns_status: "completed",
           status: "completed",
@@ -409,6 +408,15 @@ export async function POST(request: Request) {
           completed_at: new Date().toISOString(),
           metadata: nextMetadata,
         });
+
+        const { count: completedWindowCount, error: completedWindowCountError } = await supabaseAdmin
+          .from("backfill_windows")
+          .select("id", { count: "exact", head: true })
+          .eq("backfill_job_id", job.id)
+          .eq("status", "completed");
+        if (completedWindowCountError) throw completedWindowCountError;
+
+        const nextCompletedWindows = completedWindowCount ?? 0;
         await updateJob(job.id, { completed_windows: nextCompletedWindows });
 
         return NextResponse.json({
