@@ -168,10 +168,17 @@ export async function POST(request: Request) {
     let nextUrl = typeof body?.nextUrl === "string" && body.nextUrl ? normalizePaginationUrl(body.nextUrl) : null;
     let currentSource = typeof body?.currentSource === "string" && sources.includes(body.currentSource) ? body.currentSource : sources[0];
 
+    const dateField = body?.dateField === "createdDate" ? "createdDate" : "modifiedDate";
     let modifiedAfter: string | null = typeof body?.modifiedAfter === "string" ? body.modifiedAfter : null;
     let modifiedBefore: string | null = typeof body?.modifiedBefore === "string" ? body.modifiedBefore : null;
+    let createdAfter: string | null = typeof body?.createdAfter === "string" ? body.createdAfter : null;
+    let createdBefore: string | null = typeof body?.createdBefore === "string" ? body.createdBefore : null;
 
-    if (!modifiedAfter || !modifiedBefore) {
+    if (dateField === "createdDate") {
+      if (!createdAfter || !createdBefore) throw new Error("Return createdDate window is required.");
+      createdAfter = new Date(createdAfter).toISOString();
+      createdBefore = new Date(createdBefore).toISOString();
+    } else if (!modifiedAfter || !modifiedBefore) {
       if (mode === "incremental") {
         const { data: latestSuccess } = await supabaseAdmin.from("sync_runs")
           .select("finished_at")
@@ -191,6 +198,10 @@ export async function POST(request: Request) {
       }
     }
 
+    if (dateField === "modifiedDate" && (!modifiedAfter || !modifiedBefore)) throw new Error("Return modifiedDate window is required.");
+
+    const checkpointDomain = `returns:${mode}:${dateField}:${sources.join(",")}`;
+
     if (typeof body?.syncRunId === "string") {
       runId = body.syncRunId;
       const { data: existingRun, error } = await supabaseAdmin.from("sync_runs")
@@ -200,7 +211,7 @@ export async function POST(request: Request) {
       if (!existingRun) throw new Error("Return sync run was not found.");
       if (existingRun.status === "failed") throw new Error("Return sync run has already failed.");
     } else {
-      runId = await claimSyncRun(userId, "returns", "returns:" + mode + ":" + sources.join(","), { mode, sources, modifiedAfter, modifiedBefore, currentSource });
+      runId = await claimSyncRun(userId, "returns", checkpointDomain, { mode, sources, dateField, modifiedAfter, modifiedBefore, createdAfter, createdBefore, currentSource });
     }
 
     const returnRunId = runId;
@@ -215,8 +226,13 @@ export async function POST(request: Request) {
 
     if (!nextUrl) {
       const params = new URLSearchParams({ source: currentSource });
-      if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
-      if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
+      if (dateField === "createdDate") {
+        if (createdAfter) params.set("createdAfter", createdAfter);
+        if (createdBefore) params.set("createdBefore", createdBefore);
+      } else {
+        if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
+        if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
+      }
       nextUrl = `/v2/returns?${params.toString()}`;
     }
 
@@ -253,7 +269,7 @@ export async function POST(request: Request) {
       records_written: totalWritten,
       error_message: null,
       metadata: {
-        mode, sources, currentSource: nextSource, modifiedAfter, modifiedBefore,
+        mode, sources, currentSource: nextSource, dateField, modifiedAfter, modifiedBefore, createdAfter, createdBefore,
         hasMore, lastPageSize: items.length,
         lastRequestDurationMs: Date.now() - requestStarted,
         lastUrl: activeUrl,
@@ -269,8 +285,11 @@ export async function POST(request: Request) {
       currentSource: nextSource,
       nextUrl: continuationUrl,
       hasMore: !complete,
+      dateField,
       modifiedAfter,
       modifiedBefore,
+      createdAfter,
+      createdBefore,
       recordsSeen: totalSeen,
       recordsWritten: totalWritten,
     });
