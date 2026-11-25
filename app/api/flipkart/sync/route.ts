@@ -690,6 +690,7 @@ export async function POST(request: Request) {
       hasMore,
       nextPageUrl: continuationUrl,
       syncRunId: runId,
+      shipmentIds: shipments.map((shipment) => shipment.shipmentId),
       modifiedFrom: modifiedFrom.toISOString(),
       modifiedTo: modifiedTo.toISOString(),
     });
