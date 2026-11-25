@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
 
   const requestedType = new URL(request.url).searchParams.get("type");
-    const type = ["shipments", "shipment_details", "returns", "listings", "product_search"].includes(requestedType ?? "")
+    const type = ["shipments", "shipment_details", "orders", "returns", "listings", "product_search"].includes(requestedType ?? "")
       ? requestedType!
       : "shipments";
   const { data: latest } = await supabaseAdmin
