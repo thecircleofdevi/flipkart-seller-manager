@@ -160,26 +160,37 @@ export default function DashboardClient(props: Props) {
   const runHistoricalBackfill = async () => {
     if (backfillRunning || syncing) return;
     setBackfillRunning(true);
-    setBackfillMessage("Starting historical backfill...");
-    try {
-      const startResponse = await fetch("/api/flipkart/backfill", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "start" }),
-      });
-      const startResult: Record<string, unknown> = await startResponse.json().catch(() => ({}));
-      if (!startResponse.ok) throw new Error((startResult.error as string) ?? "Unable to start historical backfill.");
+    setBackfillMessage("Checking historical backfill status...");
 
-      let finished = false;
-      while (!finished) {
+    try {
+      const call = async (action: "status" | "start" | "resume" | "step") => {
         const response = await fetch("/api/flipkart/backfill", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "step" }),
+          body: JSON.stringify({ action }),
         });
         const result: Record<string, unknown> = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error((result.error as string) ?? "Historical backfill failed.");
+        if (!response.ok) throw new Error((result.error as string) ?? "Historical backfill request failed.");
+        return result;
+      };
 
+      const current = await call("status");
+      if (current.status === "completed") {
+        setBackfillMessage("Historical backfill is already complete.");
+        return;
+      }
+
+      if (current.status === "not_started") {
+        await call("start");
+        setBackfillMessage("Historical backfill started.");
+      } else {
+        await call("resume");
+        setBackfillMessage("Resuming historical backfill...");
+      }
+
+      let finished = false;
+      while (!finished) {
+        const result = await call("step");
         if (result.status === "completed") {
           finished = true;
           setBackfillMessage("Historical backfill completed and shipment details were refreshed.");
