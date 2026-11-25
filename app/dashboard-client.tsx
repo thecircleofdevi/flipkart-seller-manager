@@ -182,7 +182,7 @@ export default function DashboardClient(props: Props) {
 
     const knownDurations = new Map(historicalEstimate);
     const fallbackStageSeconds = 20;
-    const fulfilmentEstimate = ["shipments", "shipment_details", "returns"]
+    const fulfilmentEstimate = (["shipments", "shipment_details", "returns"] as const)
       .reduce((sum, type) => sum + (knownDurations.get(type) ?? fallbackStageSeconds), 0);
     const catalogueEstimate = knownDurations.get("listings") ?? fallbackStageSeconds;
     const estimatedTotalSeconds = Math.max(fulfilmentEstimate, catalogueEstimate);
@@ -273,7 +273,7 @@ export default function DashboardClient(props: Props) {
             setSyncProgress({
               status: hasMore ? "running" : "success",
               elapsedSeconds: Math.floor((Date.now() - started) / 1000),
-              estimatedTotalSeconds: 180,
+              estimatedTotalSeconds,
               recordsWritten: result.recordsWritten ?? 0,
             });
           }
@@ -343,7 +343,7 @@ export default function DashboardClient(props: Props) {
     })();
 
     return () => { cancelled = true; };
-  }, [syncing, autoSyncing]);
+  }, [syncing]);
 
   function toggleShipmentSelection(shipmentId: string) {
     setSelectedShipmentIds((current) => {
