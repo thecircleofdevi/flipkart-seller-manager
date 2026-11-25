@@ -282,32 +282,33 @@ export default function DashboardClient(props: Props) {
       }
 
       if (stage.type === "shipment_details") {
-        const pollPromise = (async () => {
-          while (!cancelled) {
-            const response = await fetch("/api/flipkart/sync/status?type=shipment_details", { cache: "no-store" });
-            const result: { error?: string; syncRunId?: string; hasMore?: boolean; nextBatchNo?: number; recordsWritten?: number; running?: boolean; status?: string; errorMessage?: string; estimatedTotalSeconds?: number } = await response.json().catch(() => ({}));
-            if (!response.ok || !result.running) {
-              if (result.status === "failed") throw new Error(result.errorMessage ?? "Shipment details failed");
-              return;
-            }
-            setSyncProgress({
-              status: "running",
-              elapsedSeconds: Math.floor((Date.now() - started) / 1000),
-              estimatedTotalSeconds: result.estimatedTotalSeconds ?? 0,
-              recordsWritten: result.recordsWritten ?? 0,
-            });
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-          }
-        })();
-
         const response = await fetch("/api/flipkart/sync/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: stage.type }),
         });
-        const result = await response.json().catch(() => ({}));
+        const result: { error?: string; syncRunId?: string; shipmentsSeen?: number; shipmentsUpdated?: number } = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? stage.label + " failed");
-        await pollPromise;
+
+        const syncRunId = result.syncRunId;
+        while (!cancelled) {
+          const statusResponse = await fetch("/api/flipkart/sync/status?type=shipment_details", { cache: "no-store" });
+          const status: { running?: boolean; status?: string; recordsWritten?: number; errorMessage?: string; estimatedTotalSeconds?: number } = await statusResponse.json().catch(() => ({}));
+          if (!statusResponse.ok) throw new Error(status.errorMessage ?? "Unable to read shipment detail sync status");
+          if (status.status === "failed") throw new Error(status.errorMessage ?? "Shipment details failed");
+          if (!status.running) {
+            if (status.status !== "success") throw new Error("Shipment details sync did not complete successfully");
+            break;
+          }
+          setSyncProgress({
+            status: "running",
+            elapsedSeconds: Math.floor((Date.now() - started) / 1000),
+            estimatedTotalSeconds: status.estimatedTotalSeconds ?? estimatedTotalSeconds,
+            recordsWritten: status.recordsWritten ?? result.shipmentsUpdated ?? 0,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+        }
+        void syncRunId;
         return;
       }
 
