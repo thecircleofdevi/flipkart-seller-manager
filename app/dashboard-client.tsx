@@ -167,6 +167,26 @@ export default function DashboardClient(props: Props) {
       { type: "listings" as const, label: "Catalogue, inventory & pricing" },
     ];
 
+    const latestSuccessfulDuration = (type: string) => {
+      const row = props.syncRows.find((item) => item.sync_type === type && item.status === "success" && item.finished_at);
+      if (!row?.finished_at) return null;
+      return Math.max(1, Math.round((new Date(row.finished_at).getTime() - new Date(row.started_at).getTime()) / 1000));
+    };
+
+    const historicalEstimate = [
+      ["shipments", latestSuccessfulDuration("shipments")],
+      ["shipment_details", latestSuccessfulDuration("shipment_details")],
+      ["returns", latestSuccessfulDuration("returns")],
+      ["listings", latestSuccessfulDuration("listings")],
+    ] as const;
+
+    const knownDurations = new Map(historicalEstimate);
+    const fallbackStageSeconds = 20;
+    const fulfilmentEstimate = ["shipments", "shipment_details", "returns"]
+      .reduce((sum, type) => sum + (knownDurations.get(type) ?? fallbackStageSeconds), 0);
+    const catalogueEstimate = knownDurations.get("listings") ?? fallbackStageSeconds;
+    const estimatedTotalSeconds = Math.max(fulfilmentEstimate, catalogueEstimate);
+
     const runPaged = async (
       type: "returns" | "listings",
       extra: Record<string, unknown> = {},
@@ -202,7 +222,7 @@ export default function DashboardClient(props: Props) {
         setSyncProgress({
           status: hasMore ? "running" : "success",
           elapsedSeconds: Math.floor((Date.now() - started) / 1000),
-          estimatedTotalSeconds: 0,
+          estimatedTotalSeconds,
           recordsWritten,
         });
       }
@@ -210,7 +230,7 @@ export default function DashboardClient(props: Props) {
 
     const runStage = async (stage: typeof stages[number]) => {
       setSyncStage(stage.type);
-      setSyncProgress({ status: "running", elapsedSeconds: 0, estimatedTotalSeconds: 0, recordsWritten: 0 });
+      setSyncProgress({ status: "running", elapsedSeconds: 0, estimatedTotalSeconds, recordsWritten: 0 });
 
       if (stage.type === "shipments") {
         const filterJobs: Array<{ filterType: "preDispatch" | "postDispatch" | "cancelled"; shipmentType?: "NORMAL" | "SELF" }> = [
