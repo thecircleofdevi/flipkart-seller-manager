@@ -217,7 +217,7 @@ export async function POST(request: Request) {
       const params = new URLSearchParams({ source: currentSource });
       if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
       if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
-      nextUrl = `/sellers/v2/returns?${params.toString()}`;
+      nextUrl = `/v2/returns?${params.toString()}`;
     }
 
     activeUrl = nextUrl;
