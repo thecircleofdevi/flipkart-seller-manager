@@ -161,7 +161,8 @@ export default function DashboardClient(props: Props) {
     const started = Date.now();
 
     const stages = [
-      { type: "shipments" as const, label: "Orders & shipment states" },
+      { type: "orders" as const, label: "Orders & order items" },
+      { type: "shipments" as const, label: "Shipment states & fulfilment" },
       { type: "shipment_details" as const, label: "Shipment details, buyer, packages & forms" },
       { type: "returns" as const, label: "Returns & return events" },
       { type: "listings" as const, label: "Catalogue, inventory & pricing" },
@@ -174,6 +175,7 @@ export default function DashboardClient(props: Props) {
     };
 
     const historicalEstimate = [
+      ["orders", latestSuccessfulDuration("orders")],
       ["shipments", latestSuccessfulDuration("shipments")],
       ["shipment_details", latestSuccessfulDuration("shipment_details")],
       ["returns", latestSuccessfulDuration("returns")],
@@ -182,13 +184,13 @@ export default function DashboardClient(props: Props) {
 
     const knownDurations = new Map(historicalEstimate);
     const fallbackStageSeconds = 20;
-    const fulfilmentEstimate = (["shipments", "shipment_details", "returns"] as const)
+    const fulfilmentEstimate = (["orders", "shipments", "shipment_details", "returns"] as const)
       .reduce((sum, type) => sum + (knownDurations.get(type) ?? fallbackStageSeconds), 0);
     const catalogueEstimate = knownDurations.get("listings") ?? fallbackStageSeconds;
     const estimatedTotalSeconds = Math.max(fulfilmentEstimate, catalogueEstimate);
 
     const runPaged = async (
-      type: "returns" | "listings",
+      type: "orders" | "returns" | "listings",
       extra: Record<string, unknown> = {},
     ) => {
       let syncRunId: string | null = null;
@@ -211,12 +213,14 @@ export default function DashboardClient(props: Props) {
         cursor = {
           ...cursor,
           nextUrl: result.nextUrl !== undefined ? result.nextUrl : cursor.nextUrl,
+          nextPageURL: result.nextPageURL !== undefined ? result.nextPageURL : cursor.nextPageURL,
           pageId: result.pageId !== undefined ? result.pageId : cursor.pageId,
           pendingSkuIds: result.pendingSkuIds !== undefined ? result.pendingSkuIds : cursor.pendingSkuIds,
           batchNo: result.nextBatchNo !== undefined ? result.nextBatchNo : cursor.batchNo,
           currentSource: result.currentSource !== undefined ? result.currentSource : cursor.currentSource,
           modifiedAfter: result.modifiedAfter !== undefined ? result.modifiedAfter : cursor.modifiedAfter,
           modifiedBefore: result.modifiedBefore !== undefined ? result.modifiedBefore : cursor.modifiedBefore,
+          mode: result.mode !== undefined ? result.mode : cursor.mode,
         };
 
         setSyncProgress({
@@ -281,6 +285,11 @@ export default function DashboardClient(props: Props) {
         return;
       }
 
+      if (stage.type === "orders") {
+        await runPaged("orders", { mode: "incremental" });
+        return;
+      }
+
       if (stage.type === "shipment_details") {
         const response = await fetch("/api/flipkart/sync/run", {
           method: "POST",
@@ -327,8 +336,9 @@ export default function DashboardClient(props: Props) {
             await runStage(stages[0]);
             await runStage(stages[1]);
             await runStage(stages[2]);
+            await runStage(stages[3]);
           })(),
-          runStage(stages[3]),
+          runStage(stages[4]),
         ]);
         const failures = [fulfilmentResult, catalogueResult].filter((r) => r.status === "rejected") as PromiseRejectedResult[];
         if (failures.length) throw failures[0].reason;
