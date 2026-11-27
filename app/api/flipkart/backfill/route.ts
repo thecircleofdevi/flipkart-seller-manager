@@ -9,7 +9,7 @@ import { POST as runShipmentDetailsSync } from "@/app/api/flipkart/sync/details/
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const DEFAULT_JOB_KEY = "historical:2025-03-01:present:v2";
+const DEFAULT_JOB_KEY = "historical:2025-03-01:present:v3";
 const INCREMENTAL_90D_JOB_KEY = "incremental:90d:v1";
 const STALE_WINDOW_MS = 10 * 60 * 1000;
 const SHIPMENT_FILTERS = [
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
         : new Date("2025-03-01T00:00:00+05:30");
       const startAt = new Date(typeof body?.startAt === "string" ? body.startAt : defaultStart.toISOString());
       const endAt = new Date(typeof body?.endAt === "string" ? body.endAt : defaultEnd.toISOString());
-      const windowDays = Number.isInteger(body?.windowDays) && body.windowDays > 0 && body.windowDays <= 31 ? body.windowDays : 7;
+      const windowDays = Number.isInteger(body?.windowDays) && body.windowDays > 0 && body.windowDays <= 90 ? body.windowDays : 90;
       if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || startAt >= endAt) {
         return NextResponse.json({ ok: false, error: "Invalid backfill range. startAt must be before endAt." }, { status: 400 });
       }
