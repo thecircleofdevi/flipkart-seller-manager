@@ -219,7 +219,9 @@ export async function POST(request: Request) {
 
     if (dateField === "modifiedDate" && (!modifiedAfter || !modifiedBefore)) throw new Error("Return modifiedDate window is required.");
 
-    const checkpointDomain = `returns:${mode}:${dateField}:${sources.join(",")}`;
+    const checkpointDomain = typeof body?.checkpointDomain === "string" && body.checkpointDomain.trim()
+      ? body.checkpointDomain.trim()
+      : `returns:${mode}:${dateField}:${sources.join(",")}`;
 
     let windowStart = dateField === "createdDate" ? createdAfter! : modifiedAfter!;
     let windowEnd = dateField === "createdDate" ? createdBefore! : modifiedBefore!;
