@@ -175,7 +175,7 @@ export default function DashboardClient(props: Props) {
     setOrderPage(1);
   }, [query]);
 
-  const runHistoricalBackfill = async (stage?: "orders") => {
+  const runHistoricalBackfill = async (stage?: "orders" | "incremental90") => {
     if (backfillRunning || syncing) return;
     setBackfillRunning(true);
     setBackfillMessage(
