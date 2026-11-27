@@ -164,7 +164,7 @@ async function upsertReturn(userId: string, runId: string, item: ReturnItem) {
     external_id: returnId,
     payload: item,
   });
-  if (rawError) throw rawError;
+  if (rawError && rawError.code !== "23505") throw rawError;
 
   return true;
 }
