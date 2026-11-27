@@ -85,6 +85,28 @@ async function updateJob(
   if (error) throw error;
 }
 
+export async function GET(request: Request): Promise<Response> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || request.headers.get("authorization") !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const batchRequest = new Request(request.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${cronSecret}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      action: "batch",
+      stage: "incremental90",
+      batchSize: 5,
+    }),
+  });
+
+  return POST(batchRequest);
+}
+
 export async function POST(request: Request): Promise<Response> {
   try {
     const user = await getUser(request);
