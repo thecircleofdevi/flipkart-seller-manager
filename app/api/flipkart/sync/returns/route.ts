@@ -199,17 +199,21 @@ export async function POST(request: Request) {
     let createdAfter: string | null = typeof body?.createdAfter === "string" ? body.createdAfter : null;
     let createdBefore: string | null = typeof body?.createdBefore === "string" ? body.createdBefore : null;
 
+    // Flipkart can return a 500 DEPENDENT_SYSTEM_CALL_FAILED on deep return
+    // pagination. Keep the requested 90-day coverage, but walk it in 7-day
+    // windows so each Flipkart cursor stays shallow and independently retryable.
+    const WINDOW_DAYS = 7;
+    const overallEnd = new Date().toISOString();
+
     if (dateField === "createdDate") {
       if (!createdAfter || !createdBefore) throw new Error("Return createdDate window is required.");
       createdAfter = new Date(createdAfter).toISOString();
       createdBefore = new Date(createdBefore).toISOString();
     } else if (!modifiedAfter || !modifiedBefore) {
       if (mode === "incremental") {
-        // Re-scan the last 90 days on every incremental run so late return
-        // updates and older returns missed by earlier syncs are recovered.
         const from = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         modifiedAfter = from.toISOString();
-        modifiedBefore = new Date().toISOString();
+        modifiedBefore = overallEnd;
       }
     }
 
@@ -217,16 +221,53 @@ export async function POST(request: Request) {
 
     const checkpointDomain = `returns:${mode}:${dateField}:${sources.join(",")}`;
 
+    let windowStart = dateField === "createdDate" ? createdAfter! : modifiedAfter!;
+    let windowEnd = dateField === "createdDate" ? createdBefore! : modifiedBefore!;
+    let overallStart = windowStart;
+    let overallFinalEnd = windowEnd;
+
     if (typeof body?.syncRunId === "string") {
       runId = body.syncRunId;
       const { data: existingRun, error } = await supabaseAdmin.from("sync_runs")
-        .select("id,status,records_seen,records_written")
+        .select("id,status,records_seen,records_written,metadata")
         .eq("id", runId).eq("user_id", userId).eq("sync_type", "returns").maybeSingle();
       if (error) throw error;
       if (!existingRun) throw new Error("Return sync run was not found.");
       if (existingRun.status === "failed") throw new Error("Return sync run has already failed.");
+
+      const metadata = (existingRun.metadata && typeof existingRun.metadata === "object")
+        ? existingRun.metadata as Record<string, unknown>
+        : {};
+      if (typeof metadata.windowStart === "string") windowStart = metadata.windowStart;
+      if (typeof metadata.windowEnd === "string") windowEnd = metadata.windowEnd;
+      if (typeof metadata.overallStart === "string") overallStart = metadata.overallStart;
+      if (typeof metadata.overallEnd === "string") overallFinalEnd = metadata.overallEnd;
+      if (typeof metadata.currentSource === "string" && sources.includes(metadata.currentSource)) currentSource = metadata.currentSource;
     } else {
-      runId = await claimSyncRun(userId, "returns", checkpointDomain, { mode, sources, dateField, modifiedAfter, modifiedBefore, createdAfter, createdBefore, currentSource });
+      const initialStart = new Date(windowStart);
+      const finalEnd = new Date(windowEnd);
+      const firstWindowEnd = new Date(Math.min(
+        initialStart.getTime() + WINDOW_DAYS * 24 * 60 * 60 * 1000,
+        finalEnd.getTime(),
+      )).toISOString();
+      windowStart = initialStart.toISOString();
+      windowEnd = firstWindowEnd;
+      overallStart = windowStart;
+      overallFinalEnd = finalEnd.toISOString();
+
+      if (dateField === "createdDate") {
+        createdAfter = windowStart;
+        createdBefore = windowEnd;
+      } else {
+        modifiedAfter = windowStart;
+        modifiedBefore = windowEnd;
+      }
+
+      runId = await claimSyncRun(userId, "returns", checkpointDomain, {
+        mode, sources, dateField, modifiedAfter, modifiedBefore, createdAfter, createdBefore,
+        currentSource, windowStart, windowEnd, overallStart, overallEnd: overallFinalEnd,
+        windowDays: WINDOW_DAYS,
+      });
     }
 
     const returnRunId = runId;
@@ -272,10 +313,44 @@ export async function POST(request: Request) {
       if (index < sources.length - 1) {
         nextSource = sources[index + 1];
         continuationUrl = null;
+      } else {
+        const currentWindowEnd = new Date(windowEnd);
+        const finalEnd = new Date(overallFinalEnd);
+        if (currentWindowEnd < finalEnd) {
+          const nextWindowStart = currentWindowEnd.toISOString();
+          const nextWindowEnd = new Date(Math.min(
+            currentWindowEnd.getTime() + WINDOW_DAYS * 24 * 60 * 60 * 1000,
+            finalEnd.getTime(),
+          )).toISOString();
+
+          windowStart = nextWindowStart;
+          windowEnd = nextWindowEnd;
+          nextSource = sources[0];
+
+          if (dateField === "createdDate") {
+            createdAfter = nextWindowStart;
+            createdBefore = nextWindowEnd;
+          } else {
+            modifiedAfter = nextWindowStart;
+            modifiedBefore = nextWindowEnd;
+          }
+
+          const params = new URLSearchParams({ source: nextSource });
+          if (dateField === "createdDate") {
+            params.set("createdAfter", createdAfter);
+            params.set("createdBefore", createdBefore);
+          } else {
+            params.set("modifiedAfter", modifiedAfter);
+            params.set("modifiedBefore", modifiedBefore);
+          }
+          continuationUrl = `/sellers/v2/returns?${params.toString()}`;
+        }
       }
     }
 
-    const complete = !hasMore && sources.indexOf(currentSource) === sources.length - 1;
+    const complete = !hasMore &&
+      sources.indexOf(currentSource) === sources.length - 1 &&
+      new Date(windowEnd).getTime() >= new Date(overallFinalEnd).getTime();
 
     const { error: progressError } = await supabaseAdmin.from("sync_runs").update({
       status: complete ? "success" : "running",
@@ -289,6 +364,7 @@ export async function POST(request: Request) {
         lastRequestDurationMs: Date.now() - requestStarted,
         lastUrl: activeUrl,
         nextUrl: continuationUrl,
+        windowStart, windowEnd, overallStart, overallEnd: overallFinalEnd, windowDays: WINDOW_DAYS,
       },
     }).eq("id", returnRunId).eq("user_id", userId);
     if (progressError) throw progressError;
