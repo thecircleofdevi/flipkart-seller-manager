@@ -310,7 +310,7 @@ export async function POST(request: Request) {
       recordsWritten: totalWritten,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatError(error);
     if (runId) {
       await supabaseAdmin.from("sync_runs").update({
         status: "failed",
