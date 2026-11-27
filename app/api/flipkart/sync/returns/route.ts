@@ -69,7 +69,8 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5
     } catch (error) {
       lastError = error;
       const message = formatError(error);
-      if (!/Flipkart API (429|500|502|503|504)/.test(message) || attempt === attempts - 1) throw error;
+      const retryable = /Flipkart API (429|500|502|503|504)/.test(message) || /fetch failed|network|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(message);
+      if (!retryable || attempt === attempts - 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** attempt)));
     }
   }
