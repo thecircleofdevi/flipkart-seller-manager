@@ -99,8 +99,43 @@ export async function POST(request: Request) {
       body?.action === "start" ? "start" :
       body?.action === "status" ? "status" :
       body?.action === "resume" ? "resume" :
+      body?.action === "batch" ? "batch" :
       "step";
     const ordersOnly = body?.stage === "orders";
+
+    if (action === "batch") {
+      const batchSize = Math.max(1, Math.min(5, Number.isInteger(body?.batchSize) ? body.batchSize : 5));
+      const results: Array<Record<string, unknown>> = [];
+
+      for (let index = 0; index < batchSize; index += 1) {
+        const stepRequest = new Request(request.url, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify({ ...body, action: "step" }),
+        });
+        const stepResponse = await POST(stepRequest);
+        const stepResult = await stepResponse.json().catch(() => ({}));
+        if (!stepResponse.ok) {
+          return NextResponse.json({ ...stepResult, batchResults: results }, { status: stepResponse.status });
+        }
+        results.push(stepResult as Record<string, unknown>);
+        if (
+          stepResult.status === "completed" ||
+          stepResult.status === "orders_completed" ||
+          stepResult.status === "failed"
+        ) {
+          break;
+        }
+      }
+
+      const last = results[results.length - 1] ?? { status: "running" };
+      return NextResponse.json({
+        ...last,
+        status: last.status ?? "running",
+        batchResults: results,
+        batchSize: results.length,
+      });
+    }
 
     if (action === "status") {
       const { data: job, error: jobError } = await supabaseAdmin
@@ -242,8 +277,9 @@ export async function POST(request: Request) {
       candidateQuery = candidateQuery.neq("orders_status", "completed");
     }
 
+    const orderPriority = ordersOnly || isIncremental90;
     let { data: candidate, error: candidateError } = await candidateQuery
-      .order("window_start", { ascending: true })
+      .order("window_start", { ascending: !orderPriority })
       .limit(1)
       .maybeSingle();
     if (candidateError) throw candidateError;
