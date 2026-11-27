@@ -198,9 +198,11 @@ export async function POST(request: Request) {
     if (dateField === "modifiedDate" && (!modifiedAfter || !modifiedBefore)) throw new Error("Order sync date window is required.");
     if (dateField === "orderDate" && (!orderDateAfter || !orderDateBefore)) throw new Error("Order date window is required.");
 
-    const checkpointDomain = dateField === "orderDate"
-      ? `orders:full:orderDate:${orderDateAfter}:${orderDateBefore}`
-      : `orders:${mode}`;
+    const checkpointDomain = typeof body?.checkpointDomain === "string" && body.checkpointDomain.trim()
+      ? body.checkpointDomain.trim()
+      : dateField === "orderDate"
+        ? `orders:full:orderDate:${orderDateAfter}:${orderDateBefore}`
+        : `orders:${mode}`;
     const { data: checkpoint } = await supabaseAdmin
       .from("sync_checkpoints")
       .select("id,cursor")
