@@ -205,19 +205,9 @@ export async function POST(request: Request) {
       createdBefore = new Date(createdBefore).toISOString();
     } else if (!modifiedAfter || !modifiedBefore) {
       if (mode === "incremental") {
-        const { data: latestSuccess } = await supabaseAdmin.from("sync_runs")
-          .select("finished_at")
-          .eq("user_id", userId)
-          .eq("sync_type", "returns")
-          .eq("status", "success")
-          .not("finished_at", "is", null)
-          .order("finished_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const from = latestSuccess?.finished_at
-          ? new Date(new Date(latestSuccess.finished_at).getTime() - 2 * 60 * 60 * 1000)
-          : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        // Re-scan the last 90 days on every incremental run so late return
+        // updates and older returns missed by earlier syncs are recovered.
+        const from = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
         modifiedAfter = from.toISOString();
         modifiedBefore = new Date().toISOString();
       }
