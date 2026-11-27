@@ -32,8 +32,8 @@ type BackfillMetadata = {
   returnSyncRunId?: string | null;
 };
 
-async function getUser() {
-  const supabase = await createClient();
+async function getUser(request?: Request) {
+  const cronSecret = process.env.CRON_SECRET;\n  const authorization = request?.headers.get("authorization");\n  if (cronSecret && authorization === `Bearer ${cronSecret}`) {\n    const serviceUserId = process.env.FLIPKART_OWNER_USER_ID;\n    if (!serviceUserId) throw new Error("FLIPKART_OWNER_USER_ID is not configured");\n    return { id: serviceUserId };\n  }\n\n  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
   if (user.id !== process.env.FLIPKART_OWNER_USER_ID) throw new Error("Forbidden");
@@ -87,7 +87,7 @@ async function updateJob(
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const user = await getUser();
+    const user = await getUser(request);
     const body = await request.json().catch(() => ({}));
     const isIncremental90 = body?.stage === "incremental90";
     const jobKey = typeof body?.jobKey === "string" && body.jobKey.trim()
