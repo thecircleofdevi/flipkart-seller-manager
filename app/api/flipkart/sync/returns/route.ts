@@ -39,6 +39,22 @@ function requiredEnv(name: string) {
   return value;
 }
 
+function formatError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    const parts = [
+      typeof value.message === "string" ? value.message : null,
+      typeof value.code === "string" ? `code=${value.code}` : null,
+      typeof value.details === "string" ? `details=${value.details}` : null,
+      typeof value.hint === "string" ? `hint=${value.hint}` : null,
+    ].filter(Boolean);
+    if (parts.length) return parts.join(" | ");
+    try { return JSON.stringify(error); } catch { return "Unknown object error"; }
+  }
+  return String(error);
+}
+
 function assertAuthorized(request: Request) {
   if (request.headers.get("x-flipkart-sync-secret") !== requiredEnv("FLIPKART_SYNC_SECRET")) {
     throw new Error("Unauthorized sync request.");
@@ -52,7 +68,7 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5
       return await flipkartRequest<T>(path, init);
     } catch (error) {
       lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = formatError(error);
       if (!/Flipkart API (429|500|502|503|504)/.test(message) || attempt === attempts - 1) throw error;
       await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * 2 ** attempt)));
     }
