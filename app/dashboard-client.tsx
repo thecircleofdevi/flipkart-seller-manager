@@ -182,7 +182,7 @@ export default function DashboardClient(props: Props) {
       stage === "orders"
         ? "Checking historical orders backfill status..."
         : stage === "incremental90"
-          ? "Checking 90-day incremental sync status..."
+          ? "Checking 90-day sync status..."
           : "Checking historical backfill status..."
     );
 
@@ -198,37 +198,52 @@ export default function DashboardClient(props: Props) {
         return result;
       };
 
+      const runListings = async () => {
+        let syncRunId: string | null = null;
+        let cursor: Record<string, unknown> = {};
+        let hasMore = true;
+        let written = 0;
+        while (hasMore) {
+          const response = await fetch("/api/flipkart/sync/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "listings", ...cursor, ...(syncRunId ? { syncRunId } : {}) }),
+          });
+          const result: Record<string, unknown> = await response.json().catch(() => ({}));
+          if (!response.ok || result.ok === false) throw new Error((result.error as string) ?? "Listings sync failed.");
+          syncRunId = (result.syncRunId as string) ?? syncRunId;
+          hasMore = Boolean(result.hasMore);
+          written += Number(result.listingsWritten ?? result.recordsWritten ?? 0);
+          cursor = {
+            ...cursor,
+            pageId: result.pageId !== undefined ? result.pageId : cursor.pageId,
+            pendingSkuIds: result.pendingSkuIds !== undefined ? result.pendingSkuIds : cursor.pendingSkuIds,
+            batchNo: result.nextBatchNo !== undefined ? result.nextBatchNo : cursor.batchNo,
+          };
+        }
+        return written;
+      };
+
       const current = await call("status");
-      if (current.status === "completed") {
+      if (current.status === "completed" || current.status === "orders_completed") {
         setBackfillMessage(
-          stage === "orders"
-            ? "Historical orders backfill is already complete."
-            : stage === "incremental90"
-              ? "90-day incremental sync is already complete."
+          stage === "incremental90"
+            ? "90-day sync is already complete."
+            : stage === "orders"
+              ? "Historical orders backfill is already complete."
               : "Historical backfill is already complete."
         );
+        if (stage === "incremental90") await runListings();
         return;
       }
 
       if (current.status === "not_started") {
         await call("start");
-        setBackfillMessage(
-          stage === "orders"
-            ? "Historical orders backfill started."
-            : stage === "incremental90"
-              ? "90-day incremental sync started."
-              : "Historical backfill started."
-        );
       } else {
         await call("resume");
-        setBackfillMessage(
-          stage === "orders"
-            ? "Resuming historical orders backfill..."
-            : stage === "incremental90"
-              ? "Resuming 90-day incremental sync..."
-              : "Resuming historical backfill..."
-        );
       }
+
+      const listingsPromise = stage === "incremental90" ? runListings() : Promise.resolve(0);
 
       let finished = false;
       while (!finished) {
@@ -239,22 +254,26 @@ export default function DashboardClient(props: Props) {
             result.status === "orders_completed"
               ? "Historical orders backfill completed."
               : stage === "incremental90"
-                ? "90-day incremental sync completed."
+                ? "90-day sync completed. Orders, shipments, returns, shipment details and listings are up to date."
                 : "Historical backfill completed and shipment details were refreshed."
           );
         } else {
-          const stage = String(result.stage ?? "stage").replaceAll("_", " ");
+          const currentStage = String(result.stage ?? "stage").replaceAll("_", " ");
           const windowStart = result.windowStart ? new Date(String(result.windowStart)).toLocaleDateString("en-IN") : "";
           const windowEnd = result.windowEnd ? new Date(String(result.windowEnd)).toLocaleDateString("en-IN") : "";
-          setBackfillMessage(`Backfill running: ${stage} · ${windowStart} to ${windowEnd}`);
+          setBackfillMessage(`Sync running: ${currentStage} · ${windowStart} to ${windowEnd}`);
         }
       }
+
+      await listingsPromise;
     } catch (error) {
-      setBackfillMessage(error instanceof Error ? error.message : "Historical backfill failed.");
+      setBackfillMessage(error instanceof Error ? error.message : "Sync failed.");
     } finally {
       setBackfillRunning(false);
+      window.location.reload();
     }
   };
+
 
   useEffect(() => {
     if (!syncing) return;
@@ -777,9 +796,9 @@ export default function DashboardClient(props: Props) {
 
   async function runSync() {
     setSyncMessage(null);
-    setSyncProgress({ status: "starting", elapsedSeconds: 0, estimatedTotalSeconds: 0, recordsWritten: 0 });
     setSyncStage("all");
-    setSyncing("all");
+    setSyncing(null);
+    void runHistoricalBackfill("incremental90");
   }
 
   return (
@@ -913,7 +932,7 @@ export default function DashboardClient(props: Props) {
                 </div>
               </div>) : <div className="empty big">No shipments match your search.</div>}
             </div>}
-            {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "all" ? "Syncing all marketplace data" : "Syncing marketplace data"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing) || backfillRunning} onClick={runSync}>{syncing === "all" ? "Syncing all data..." : "Sync all data"}</button><button className="text-button" disabled={Boolean(syncing) || backfillRunning} onClick={() => runHistoricalBackfill("orders")}>{backfillRunning ? "Backfilling orders..." : "Backfill orders from Mar 2025"}</button><button className="text-button" disabled={Boolean(syncing) || backfillRunning} onClick={() => runHistoricalBackfill("incremental90")}>{backfillRunning ? "Syncing 90 days..." : "Sync last 90 days"}</button><button className="text-button" disabled={Boolean(syncing) || backfillRunning} onClick={() => runHistoricalBackfill()}>{backfillRunning ? "Backfilling history..." : "Backfill full history"}</button><button className="text-button" disabled={auditLoading || Boolean(syncing) || backfillRunning} onClick={runAudit}>{auditLoading ? "Auditing..." : "Run completeness audit"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{auditError && <div className="sync-message" style={{marginTop:10}}>{auditError}</div>}{audit && <div className="card" style={{marginTop:14}}><div className="section-head"><h3 className="section-title">Data completeness</h3><span className={"badge " + (audit.overall === "critical" ? "" : audit.overall === "warning" ? "warn" : "good")}>{audit.overall}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>{Object.entries(audit.counts ?? {}).map(([key,value]) => <div className="badge" key={key}>{key.replaceAll("_"," ")}: {String(value)}</div>)}</div>{audit.critical?.map((item:string) => <div className="sync-message" key={item}>Critical: {item}</div>)}{audit.warnings?.map((item:string) => <div className="sync-message" key={item}>Warning: {item}</div>)}{audit.backfill && <div className="sync-message">Historical backfill: {audit.backfill.completed_windows}/{audit.backfill.total_windows} windows complete.</div>}<div className="sync-message">Generated {date(audit.generatedAt)}</div></div>}{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
+            {active === "sync" && <div className="table-card">{syncing && syncProgress && <div className="sync-progress"><div className="sync-progress-head"><span>{syncing === "all" ? "Syncing all marketplace data" : "Syncing marketplace data"}</span><span className="sync-progress-time">{formatDuration(syncProgress.elapsedSeconds)} elapsed</span></div><div className="sync-progress-track"><div className="sync-progress-bar" style={{ width: `${Math.min(95, Math.max(4, (syncProgress.elapsedSeconds / Math.max(1, syncProgress.estimatedTotalSeconds)) * 100))}%` }} /></div><div className="sync-progress-meta"><span>{syncProgress.recordsWritten.toLocaleString("en-IN")} records written</span><span>ETA ~ {formatDuration(Math.max(0, syncProgress.estimatedTotalSeconds - syncProgress.elapsedSeconds))}</span></div></div>}<div className="sync-actions"><button className="primary-button" disabled={Boolean(syncing) || backfillRunning} onClick={runSync}>{backfillRunning ? "Syncing last 90 days..." : "Sync all data · last 90 days"}</button><button className="text-button" disabled={auditLoading || Boolean(syncing) || backfillRunning} onClick={runAudit}>{auditLoading ? "Auditing..." : "Run completeness audit"}</button>{syncMessage && <span className="sync-message">{syncMessage}</span>}</div>{auditError && <div className="sync-message" style={{marginTop:10}}>{auditError}</div>}{audit && <div className="card" style={{marginTop:14}}><div className="section-head"><h3 className="section-title">Data completeness</h3><span className={"badge " + (audit.overall === "critical" ? "" : audit.overall === "warning" ? "warn" : "good")}>{audit.overall}</span></div><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:8}}>{Object.entries(audit.counts ?? {}).map(([key,value]) => <div className="badge" key={key}>{key.replaceAll("_"," ")}: {String(value)}</div>)}</div>{audit.critical?.map((item:string) => <div className="sync-message" key={item}>Critical: {item}</div>)}{audit.warnings?.map((item:string) => <div className="sync-message" key={item}>Warning: {item}</div>)}{audit.backfill && <div className="sync-message">Historical backfill: {audit.backfill.completed_windows}/{audit.backfill.total_windows} windows complete.</div>}<div className="sync-message">Generated {date(audit.generatedAt)}</div></div>}{props.syncRows.length ? props.syncRows.map((r) => <div className="table-row" key={r.id}><div className="row-main"><span className={"status-dot " + (r.status === "success" ? "green" : r.status === "failed" ? "red" : "orange")}/><div><strong>{r.sync_type.replaceAll("_", " ")}</strong><small>{date(r.finished_at ?? r.started_at)} · {r.records_written ?? 0} records</small></div></div><span className={"sync-status " + r.status}>{r.status}</span></div>) : <div className="empty big">No sync history yet.</div>}</div>}
             {active === "orders" && <div className="table-card"><div className="table-toolbar"><span>Order stream</span><div style={{display:"flex",alignItems:"center",gap:8}}><span>{remoteOrderTotal} records · page {orderPage} / {Math.max(1, Math.ceil(remoteOrderTotal / pageSize))}{orderSearchLoading ? " · loading…" : ""}</span><button className="text-button" disabled={orderPage <= 1 || orderSearchLoading} onClick={() => setOrderPage((p) => Math.max(1, p - 1))}>Previous</button><button className="text-button" disabled={orderPage >= Math.max(1, Math.ceil(remoteOrderTotal / pageSize)) || orderSearchLoading} onClick={() => setOrderPage((p) => p + 1)}>Next</button></div></div>{visibleOrders.length ? visibleOrders.map((o) => <button className="table-row table-row-button" key={o.id} onClick={() => setSelectedOrderId(o.id)}><div className="row-main"><span className={"status-dot " + (o.status?.toLowerCase().includes("cancel") ? "red" : "green")}/><div><strong>{o.flipkart_order_id ?? "Order"}</strong><small>{o.status ?? "Status pending"}</small></div></div><span className="badge">{date(o.order_date)}</span><span className="row-arrow">↗</span></button>) : <div className="empty big">No orders match your search.</div>}</div>}
             {active === "labels" && <div className="empty-state"><div className="empty-orb">▣</div><h3>Label Workspace</h3><p>Open the dedicated 4×6 thermal label workspace to crop, save presets, process multiple PDFs and prepare a print-ready batch.</p><a className="primary-button" href="/labels">Open Label Workspace</a></div>}
             {active === "listings" && <div className="table-card"><div className="table-toolbar"><span>Catalogue</span><span>{filteredListings.length} records · page {listingPage} / {Math.max(1, Math.ceil(filteredListings.length / pageSize))}</span></div>{visibleListings.length ? visibleListings.map((l) => <div className="table-row" key={l.id}><div className="row-main"><span className={"status-dot " + (l.status === "ACTIVE" ? "green" : "orange")}/><div><strong>{l.sku ?? "SKU pending"}</strong><small>{l.fsn ?? "FSN pending"} · {l.procurement_type ?? "Procurement pending"}</small></div></div><span className="badge">{l.status ?? "Unknown"}</span><span className="row-date">{l.shipping_provider ?? "Shipping provider pending"}</span><div style={{display:"flex",gap:6,marginLeft:"auto"}}>{l.sku && <><button className="text-button" onClick={() => updateInventory(l.sku!)}>Stock</button><button className="text-button" onClick={() => updatePrice(l.sku!)}>Price</button></>}</div></div>) : <div className="empty big">No listings match your search.</div>}</div>}
