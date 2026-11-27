@@ -337,11 +337,11 @@ export async function POST(request: Request) {
 
           const params = new URLSearchParams({ source: nextSource });
           if (dateField === "createdDate") {
-            params.set("createdAfter", createdAfter);
-            params.set("createdBefore", createdBefore);
+            params.set("createdAfter", createdAfter!);
+            params.set("createdBefore", createdBefore!);
           } else {
-            params.set("modifiedAfter", modifiedAfter);
-            params.set("modifiedBefore", modifiedBefore);
+            params.set("modifiedAfter", modifiedAfter!);
+            params.set("modifiedBefore", modifiedBefore!);
           }
           continuationUrl = `/sellers/v2/returns?${params.toString()}`;
         }
