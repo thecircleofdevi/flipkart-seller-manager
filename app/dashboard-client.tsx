@@ -187,11 +187,11 @@ export default function DashboardClient(props: Props) {
     );
 
     try {
-      const call = async (action: "status" | "start" | "resume" | "step") => {
+      const call = async (action: "status" | "start" | "resume" | "step" | "batch") => {
         const response = await fetch("/api/flipkart/backfill", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, ...(stage ? { stage } : {}) }),
+          body: JSON.stringify({ action, ...(stage ? { stage } : {}), ...(action === "batch" ? { batchSize: 5 } : {}) }),
         });
         const result: Record<string, unknown> = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error((result.error as string) ?? "Historical backfill request failed.");
@@ -247,7 +247,7 @@ export default function DashboardClient(props: Props) {
 
       let finished = false;
       while (!finished) {
-        const result = await call("step");
+        const result = await call("batch");
         if (result.status === "completed" || result.status === "orders_completed") {
           finished = true;
           setBackfillMessage(
