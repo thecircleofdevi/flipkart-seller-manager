@@ -79,7 +79,15 @@ async function requestWithRetry<T>(path: string, init: RequestInit, attempts = 5
 function normalizePaginationUrl(value: string) {
   const url = new URL(value, "https://api.flipkart.net");
   if (url.hostname !== "api.flipkart.net") throw new Error("Invalid Flipkart pagination URL.");
-  return url.pathname + url.search;
+
+  let pathname = url.pathname;
+  // Flipkart's returns API can emit a pagination URL as /returns/search/{cursor}
+  // even though the documented resource lives under /sellers/v2/returns.
+  // Normalize that returned cursor to the seller API route before requesting it.
+  if (pathname.startsWith("/sellers/v2/")) return pathname + url.search;
+  if (pathname.startsWith("/sellers/")) pathname = `/sellers/v2${pathname.slice("/sellers".length)}`;
+  else pathname = `/sellers/v2${pathname}`;
+  return pathname + url.search;
 }
 
 function firstString(item: ReturnItem, keys: string[]) {
