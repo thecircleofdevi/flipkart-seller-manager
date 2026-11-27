@@ -94,6 +94,7 @@ export async function POST(request: Request) {
       body?.action === "status" ? "status" :
       body?.action === "resume" ? "resume" :
       "step";
+    const ordersOnly = body?.stage === "orders";
 
     if (action === "status") {
       const { data: job, error: jobError } = await supabaseAdmin
@@ -215,17 +216,32 @@ export async function POST(request: Request) {
       .eq("status", "running")
       .lt("updated_at", staleBefore);
 
-    const { data: candidate, error: candidateError } = await supabaseAdmin
+    let candidateQuery = supabaseAdmin
       .from("backfill_windows")
       .select("*")
       .eq("backfill_job_id", job.id)
-      .neq("status", "completed")
+      .neq("status", "completed");
+
+    if (ordersOnly) {
+      candidateQuery = candidateQuery.neq("orders_status", "completed");
+    }
+
+    const { data: candidate, error: candidateError } = await candidateQuery
       .order("window_start", { ascending: true })
       .limit(1)
       .maybeSingle();
     if (candidateError) throw candidateError;
 
     if (!candidate) {
+      if (ordersOnly) {
+        return NextResponse.json({
+          ok: true,
+          status: "orders_completed",
+          message: "All historical order windows have been processed. Shipment and return stages remain untouched.",
+          totalWindows: job.total_windows,
+        });
+      }
+
       await updateJob(job.id, {
         status: "completed",
         completed_at: new Date().toISOString(),
@@ -286,9 +302,18 @@ export async function POST(request: Request) {
 
         await updateWindow(win.id, {
           orders_status: "completed",
+          status: ordersOnly ? "pending" : "running",
           metadata: { ...nextMetadata, ordersNextPageURL: null },
         });
-        return NextResponse.json({ ok: true, status: "running", stage: "orders", windowStart: win.window_start, windowEnd: win.window_end, result });
+        return NextResponse.json({
+          ok: true,
+          status: "running",
+          stage: "orders",
+          windowStart: win.window_start,
+          windowEnd: win.window_end,
+          result,
+          ordersOnly,
+        });
       }
 
       if (win.shipments_status !== "completed") {
