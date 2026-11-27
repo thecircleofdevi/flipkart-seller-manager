@@ -226,21 +226,39 @@ export async function POST(request: Request) {
       .eq("status", "running")
       .lt("updated_at", staleBefore);
 
-    let candidateQuery = supabaseAdmin
-      .from("backfill_windows")
-      .select("*")
-      .eq("backfill_job_id", job.id)
-      .neq("status", "completed");
+    const baseCandidateQuery = () =>
+      supabaseAdmin
+        .from("backfill_windows")
+        .select("*")
+        .eq("backfill_job_id", job.id)
+        .neq("status", "completed");
 
-    if (ordersOnly) {
+    // For the 90-day sync, finish the Orders domain across every 7-day
+    // window before starting shipments/returns. Otherwise the first old
+    // window can spend a long time in fulfilment stages while newer orders
+    // remain untouched.
+    let candidateQuery = baseCandidateQuery();
+    if (ordersOnly || isIncremental90) {
       candidateQuery = candidateQuery.neq("orders_status", "completed");
     }
 
-    const { data: candidate, error: candidateError } = await candidateQuery
+    let { data: candidate, error: candidateError } = await candidateQuery
       .order("window_start", { ascending: true })
       .limit(1)
       .maybeSingle();
     if (candidateError) throw candidateError;
+
+    // Once all order windows are complete, the incremental job continues
+    // with the normal per-window shipment/return stages.
+    if (!candidate && isIncremental90 && !ordersOnly) {
+      const remainingQuery = baseCandidateQuery();
+      const remaining = await remainingQuery
+        .order("window_start", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (remaining.error) throw remaining.error;
+      candidate = remaining.data;
+    }
 
     if (!candidate) {
       if (ordersOnly) {
