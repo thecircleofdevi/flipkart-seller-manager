@@ -436,9 +436,11 @@ export async function POST(request: Request) {
       throw new Error("Shipment sync window cannot exceed 7 days.");
     }
 
-    const checkpointDomain = mode === "full"
-      ? `shipments:full:${filterType}:${shipmentType ?? "ALL"}:${modifiedFrom.toISOString()}`
-      : `shipments:incremental:${filterType}:${shipmentType ?? "ALL"}`;
+    const checkpointDomain = typeof body?.checkpointDomain === "string" && body.checkpointDomain.trim()
+      ? body.checkpointDomain.trim()
+      : mode === "full"
+        ? `shipments:full:${filterType}:${shipmentType ?? "ALL"}:${modifiedFrom.toISOString()}`
+        : `shipments:incremental:${filterType}:${shipmentType ?? "ALL"}`;
     let checkpoint: { id: string; cursor: Record<string, unknown> } | null = null;
 
     const { data: checkpointRow, error: checkpointError } = await supabaseAdmin
