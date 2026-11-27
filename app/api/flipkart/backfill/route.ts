@@ -10,6 +10,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const DEFAULT_JOB_KEY = "historical:2025-03-01:present:v2";
+const INCREMENTAL_90D_JOB_KEY = "incremental:90d:v1";
 const STALE_WINDOW_MS = 10 * 60 * 1000;
 const SHIPMENT_FILTERS = [
   { filterType: "preDispatch" as const },
@@ -88,7 +89,12 @@ export async function POST(request: Request) {
   try {
     const user = await getUser();
     const body = await request.json().catch(() => ({}));
-    const jobKey = typeof body?.jobKey === "string" && body.jobKey.trim() ? body.jobKey.trim() : DEFAULT_JOB_KEY;
+    const isIncremental90 = body?.stage === "incremental90";
+    const jobKey = typeof body?.jobKey === "string" && body.jobKey.trim()
+      ? body.jobKey.trim()
+      : isIncremental90
+        ? INCREMENTAL_90D_JOB_KEY
+        : DEFAULT_JOB_KEY;
     const action =
       body?.action === "start" ? "start" :
       body?.action === "status" ? "status" :
@@ -119,8 +125,12 @@ export async function POST(request: Request) {
     }
 
     if (action === "start") {
-      const startAt = new Date(typeof body?.startAt === "string" ? body.startAt : "2025-03-01T00:00:00+05:30");
-      const endAt = new Date(typeof body?.endAt === "string" ? body.endAt : new Date().toISOString());
+      const defaultEnd = new Date();
+      const defaultStart = isIncremental90
+        ? new Date(defaultEnd.getTime() - 90 * 24 * 60 * 60 * 1000)
+        : new Date("2025-03-01T00:00:00+05:30");
+      const startAt = new Date(typeof body?.startAt === "string" ? body.startAt : defaultStart.toISOString());
+      const endAt = new Date(typeof body?.endAt === "string" ? body.endAt : defaultEnd.toISOString());
       const windowDays = Number.isInteger(body?.windowDays) && body.windowDays > 0 && body.windowDays <= 31 ? body.windowDays : 7;
       if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime()) || startAt >= endAt) {
         return NextResponse.json({ ok: false, error: "Invalid backfill range. startAt must be before endAt." }, { status: 400 });
@@ -278,14 +288,24 @@ export async function POST(request: Request) {
       await updateJob(job.id, { current_window_start: win.window_start, current_window_end: win.window_end });
 
       if (win.orders_status !== "completed") {
-        const response = await invokeSync(request, "orders", {
-          mode: "full",
-          dateField: "orderDate",
-          orderDateAfter: win.window_start,
-          orderDateBefore: win.window_end,
-          ...(metadata.ordersSyncRunId ? { syncRunId: metadata.ordersSyncRunId } : {}),
-          ...(metadata.ordersNextPageURL ? { nextPageURL: metadata.ordersNextPageURL } : {}),
-        });
+        const response = await invokeSync(request, "orders", isIncremental90
+          ? {
+              mode: "incremental",
+              dateField: "modifiedDate",
+              modifiedAfter: win.window_start,
+              modifiedBefore: win.window_end,
+              checkpointDomain: `orders:incremental90:${win.window_start}:${win.window_end}`,
+              ...(metadata.ordersSyncRunId ? { syncRunId: metadata.ordersSyncRunId } : {}),
+              ...(metadata.ordersNextPageURL ? { nextPageURL: metadata.ordersNextPageURL } : {}),
+            }
+          : {
+              mode: "full",
+              dateField: "orderDate",
+              orderDateAfter: win.window_start,
+              orderDateBefore: win.window_end,
+              ...(metadata.ordersSyncRunId ? { syncRunId: metadata.ordersSyncRunId } : {}),
+              ...(metadata.ordersNextPageURL ? { nextPageURL: metadata.ordersNextPageURL } : {}),
+            });
         const result = await response.clone().json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? "Orders backfill failed.");
 
@@ -349,11 +369,12 @@ export async function POST(request: Request) {
         }
 
         result = await invokeSync(request, "shipments", {
-          mode: "full",
+          mode: isIncremental90 ? "incremental" : "full",
           filterType: filter.filterType,
           ...(filter.shipmentType ? { shipmentType: filter.shipmentType } : {}),
           modifiedFrom: win.window_start,
           modifiedTo: win.window_end,
+          ...(isIncremental90 ? { checkpointDomain: `shipments:incremental90:${filter.filterType}:${filter.shipmentType ?? "ALL"}:${win.window_start}:${win.window_end}` } : {}),
           ...(metadata.shipmentSyncRunId ? { syncRunId: metadata.shipmentSyncRunId } : {}),
           ...(metadata.shipmentNextPageUrl ? { nextPageUrl: metadata.shipmentNextPageUrl } : {}),
         });
@@ -402,15 +423,26 @@ export async function POST(request: Request) {
       }
 
       if (win.returns_status !== "completed") {
-        const response = await invokeSync(request, "returns", {
-          mode: "full",
-          dateField: "createdDate",
-          createdAfter: win.window_start,
-          createdBefore: win.window_end,
-          ...(metadata.returnSyncRunId ? { syncRunId: metadata.returnSyncRunId } : {}),
-          ...(metadata.returnNextUrl ? { nextUrl: metadata.returnNextUrl } : {}),
-          ...(metadata.returnCurrentSource ? { currentSource: metadata.returnCurrentSource } : {}),
-        });
+        const response = await invokeSync(request, "returns", isIncremental90
+          ? {
+              mode: "incremental",
+              dateField: "modifiedDate",
+              modifiedAfter: win.window_start,
+              modifiedBefore: win.window_end,
+              checkpointDomain: `returns:incremental90:${win.window_start}:${win.window_end}`,
+              ...(metadata.returnSyncRunId ? { syncRunId: metadata.returnSyncRunId } : {}),
+              ...(metadata.returnNextUrl ? { nextUrl: metadata.returnNextUrl } : {}),
+              ...(metadata.returnCurrentSource ? { currentSource: metadata.returnCurrentSource } : {}),
+            }
+          : {
+              mode: "full",
+              dateField: "createdDate",
+              createdAfter: win.window_start,
+              createdBefore: win.window_end,
+              ...(metadata.returnSyncRunId ? { syncRunId: metadata.returnSyncRunId } : {}),
+              ...(metadata.returnNextUrl ? { nextUrl: metadata.returnNextUrl } : {}),
+              ...(metadata.returnCurrentSource ? { currentSource: metadata.returnCurrentSource } : {}),
+            });
         const result = await response.clone().json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error ?? "Returns backfill failed.");
 
