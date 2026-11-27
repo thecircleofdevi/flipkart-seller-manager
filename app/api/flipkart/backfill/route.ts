@@ -33,7 +33,15 @@ type BackfillMetadata = {
 };
 
 async function getUser(request?: Request) {
-  const cronSecret = process.env.CRON_SECRET;\n  const authorization = request?.headers.get("authorization");\n  if (cronSecret && authorization === `Bearer ${cronSecret}`) {\n    const serviceUserId = process.env.FLIPKART_OWNER_USER_ID;\n    if (!serviceUserId) throw new Error("FLIPKART_OWNER_USER_ID is not configured");\n    return { id: serviceUserId };\n  }\n\n  const supabase = await createClient();
+  const cronSecret = process.env.CRON_SECRET;
+  const authorization = request?.headers.get("authorization");
+  if (cronSecret && authorization === `Bearer ${cronSecret}`) {
+    const serviceUserId = process.env.FLIPKART_OWNER_USER_ID;
+    if (!serviceUserId) throw new Error("FLIPKART_OWNER_USER_ID is not configured");
+    return { id: serviceUserId };
+  }
+
+  const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
   if (user.id !== process.env.FLIPKART_OWNER_USER_ID) throw new Error("Forbidden");
