@@ -283,11 +283,11 @@ export async function POST(request: Request) {
     if (!nextUrl) {
       const params = new URLSearchParams({ source: currentSource });
       if (dateField === "createdDate") {
-        if (createdAfter) params.set("createdAfter", createdAfter);
-        if (createdBefore) params.set("createdBefore", createdBefore);
+        if (createdAfter) params.set("createdAfter", createdAfter!);
+        if (createdBefore) params.set("createdBefore", createdBefore!);
       } else {
-        if (modifiedAfter) params.set("modifiedAfter", modifiedAfter);
-        if (modifiedBefore) params.set("modifiedBefore", modifiedBefore);
+        if (modifiedAfter) params.set("modifiedAfter", modifiedAfter!);
+        if (modifiedBefore) params.set("modifiedBefore", modifiedBefore!);
       }
       nextUrl = `/sellers/v2/returns?${params.toString()}`;
     }
