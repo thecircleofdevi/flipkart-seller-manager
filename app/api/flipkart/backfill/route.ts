@@ -85,7 +85,7 @@ async function updateJob(
   if (error) throw error;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<Response> {
   try {
     const user = await getUser();
     const body = await request.json().catch(() => ({}));
@@ -113,8 +113,8 @@ export async function POST(request: Request) {
           headers: request.headers,
           body: JSON.stringify({ ...body, action: "step" }),
         });
-        const stepResponse = await POST(stepRequest);
-        const stepResult = await stepResponse.json().catch(() => ({}));
+        const stepResponse: Response = await POST(stepRequest);
+        const stepResult: Record<string, unknown> = await stepResponse.json().catch(() => ({}));
         if (!stepResponse.ok) {
           return NextResponse.json({ ...stepResult, batchResults: results }, { status: stepResponse.status });
         }
